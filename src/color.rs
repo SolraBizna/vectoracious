@@ -113,6 +113,31 @@ impl Color {
             a: self.a,
         }
     }
+    /// Make a color less (or more) opaque based on a passed-in opacity value.
+    pub fn opacity(&self, a: f32) -> Color {
+        if a == 1.0 {
+            *self
+        }
+        else {
+            Color {
+                r: f16::from_f32(self.r.to_f32() * a),
+                g: f16::from_f32(self.g.to_f32() * a),
+                b: f16::from_f32(self.b.to_f32() * a),
+                a: f16::from_f32(self.a.to_f32() * a),
+            }
+        }
+    }
+    /// Interpolate between ourselves (alpha = 0.0) and another color (alpha =
+    /// 1.0).
+    pub fn lerp(&self, other: Color, a: f32) -> Color {
+        let r_a = 1.0 - a;
+        Color {
+            r: f16::from_f32(self.r.to_f32() * r_a + other.r.to_f32() * a),
+            g: f16::from_f32(self.g.to_f32() * r_a + other.g.to_f32() * a),
+            b: f16::from_f32(self.b.to_f32() * r_a + other.b.to_f32() * a),
+            a: f16::from_f32(self.a.to_f32() * r_a + other.a.to_f32() * a),
+        }
+    }
 }
 
 impl Mul<f32> for &Color {
@@ -126,3 +151,4 @@ impl Mul<f32> for &Color {
         }
     }
 }
+

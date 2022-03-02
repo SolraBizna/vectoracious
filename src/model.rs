@@ -108,7 +108,7 @@ fn inner_parse_color(args: &[&str]) -> Result<(f32,f32,f32,f32), SomeKindaError>
     Ok((r, g, b, a))
 }
 
-/// Documentation. I meant how do I write it?
+/// Parses a color specification from a V2D, for the `*c` commands.
 ///
 /// - linear: If true, the color components are linear, otherwise sRGB.
 /// - prepremultiplied: If true, the color components have been pre-multiplied
@@ -122,6 +122,7 @@ fn parse_color(linear: bool, prepremultiplied: bool, src: &[&str])
     Ok(color)
 }
 
+/// Parses a bounding box specification from a V2D.
 fn parse_bounding_box(args: &[&str]) -> Result<BoundingBox, SomeKindaError> {
     if args.len() != 8 { return Err(())? }
     Ok(BoundingBox {
@@ -132,6 +133,9 @@ fn parse_bounding_box(args: &[&str]) -> Result<BoundingBox, SomeKindaError> {
     })
 }
 
+/// Checks to see if a given point is already in the list, and reuses it if so.
+/// Otherwise, inserts it into the list. Returns the index in the list at which
+/// the point can now be found.
 fn find_or_insert_point(point: Point, points: &mut Vec<Point>) -> usize {
     for n in (0 .. points.len()).rev() {
         if points[n] == point { return n }
@@ -260,7 +264,7 @@ impl Model {
         Ok(Model { points, triangles, colors })
     }
     pub fn render(&self, transform: &Transform, color_overrides: &[Color],
-                  opacity: f32, batched_verts: &mut Vec<BatchVert>) {
+                  opacity: f32, batched_verts: &mut Vec<BatchModelVert>) {
         // transform each point
         let points: Vec<Point>
             = self.points.iter().map(|x| transform.transform_point(x))
@@ -275,13 +279,13 @@ impl Model {
             let a = &points[triangle.0 as usize];
             let b = &points[triangle.1 as usize];
             let c = &points[triangle.2 as usize];
-            batched_verts.push(BatchVert {
+            batched_verts.push(BatchModelVert {
                 x: a.x, y: a.y, r: color.r, g: color.g, b: color.b, a: color.a
             });
-            batched_verts.push(BatchVert {
+            batched_verts.push(BatchModelVert {
                 x: b.x, y: b.y, r: color.r, g: color.g, b: color.b, a: color.a
             });
-            batched_verts.push(BatchVert {
+            batched_verts.push(BatchModelVert {
                 x: c.x, y: c.y, r: color.r, g: color.g, b: color.b, a: color.a
             });
         }

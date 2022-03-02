@@ -4,6 +4,8 @@ mod color;
 pub use color::*;
 mod model;
 pub use model::*;
+mod text;
+pub use text::*;
 mod render;
 pub use render::*;
 
