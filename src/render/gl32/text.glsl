@@ -1,4 +1,4 @@
-#version 130 /* -*- c -*- */
+#version 140 /* -*- c -*- */
 
 out lowp vec4 result;
 

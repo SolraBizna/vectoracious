@@ -1,4 +1,4 @@
-#version 130 /* -*- c -*- */
+#version 140 /* -*- c -*- */
 
 flat in lowp vec4 frag_color;
 

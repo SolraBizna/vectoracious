@@ -263,14 +263,19 @@ impl Model {
         }
         Ok(Model { points, triangles, colors })
     }
-    pub fn render(&self, transform: &Transform, color_overrides: &[Color],
-                  opacity: f32, batched_verts: &mut Vec<BatchModelVert>) {
+    pub(crate)
+    fn render<'a, B>(&self, transform: &Transform,
+                     color_overrides: &[Color],
+                     opacity: f32, mut batch: B,
+                     renderer: &'a mut Box<dyn Renderer>) -> ModelBatch
+    where B: ModelBatchable + From<ModelBatch> + Into<ModelBatch>
+    {
         // transform each point
         let points: Vec<Point>
             = self.points.iter().map(|x| transform.transform_point(x))
             .collect();
         // batch each triangle
-        batched_verts.reserve(self.triangles.len() * 3);
+        //batch.reserve(self.triangles.len());
         for triangle in self.triangles.iter() {
             let color = color_overrides.get(triangle.3 as usize)
                 .or_else(|| self.colors.get(triangle.3 as usize))
@@ -279,16 +284,15 @@ impl Model {
             let a = &points[triangle.0 as usize];
             let b = &points[triangle.1 as usize];
             let c = &points[triangle.2 as usize];
-            batched_verts.push(BatchModelVert {
-                x: a.x, y: a.y, r: color.r, g: color.g, b: color.b, a: color.a
-            });
-            batched_verts.push(BatchModelVert {
-                x: b.x, y: b.y, r: color.r, g: color.g, b: color.b, a: color.a
-            });
-            batched_verts.push(BatchModelVert {
-                x: c.x, y: c.y, r: color.r, g: color.g, b: color.b, a: color.a
-            });
+            if batch.push(a.x, a.y, b.x, b.y, c.x, c.y, color).is_err() {
+                renderer.consume_model_batch(batch.into());
+                batch = renderer.open_model_batch().into();
+                batch.push(a.x, a.y, b.x, b.y, c.x, c.y, color)
+                    .expect("Couldn't push a single vertex into a fresh \
+                             batch!");
+            }
         }
+        batch.into()
     }
 }
 

@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::anyhow;
-use log::{warn, debug, info};
+use log::{warn, debug, info, trace};
 use sdl2::{
     video::{GLContext, GLProfile, Window, WindowBuilder},
     VideoSubsystem,
@@ -15,9 +15,63 @@ use sdl2::{
 mod binding;
 use binding::*;
 
+use super::glerr::ERROR_TABLE;
+
 #[derive(Debug,PartialEq,Eq)]
 enum LastBatchType {
     None, Model, Text
+}
+
+#[derive(Debug)]
+struct Buf {
+    vbo: GLuint,
+    fence: Option<GLsync>,
+    vaos: [GLuint; 2],
+}
+
+impl Buf {
+    pub fn new(gl: &Procs, quadra: GLuint) -> Buf {
+        let mut vbo = 0;
+        let mut vaos = [0; 2];
+        // unsafe justification: trivial
+        unsafe {
+            gl.GenBuffers(1, &mut vbo);
+            gl.BindBuffer(GL_ARRAY_BUFFER, vbo);
+            gl.BufferData(GL_ARRAY_BUFFER, BUF_SIZE as GLsizeiptr, null(),
+                          GL_DYNAMIC_DRAW);
+            // Generate two VAOs, one for rendering model, one for rendering
+            // text
+            gl.GenVertexArrays(2, &mut vaos[0]);
+            // Model: X___Y___R_G_B_A_
+            gl.BindVertexArray(vaos[0]);
+            gl.EnableVertexAttribArray(0);
+            gl.VertexAttribPointer(0, 2, GL_FLOAT, 0, 16,
+                                   transmute(0usize));
+            gl.EnableVertexAttribArray(2);
+            gl.VertexAttribPointer(2, 4, GL_HALF_FLOAT, 0, 16,
+                                   transmute(8usize));
+            // Text: X_Y_U_V_R1G1B1A1R2G2B2A2
+            gl.BindVertexArray(vaos[1]);
+            gl.EnableVertexAttribArray(0);
+            gl.VertexAttribPointer(0, 2, GL_HALF_FLOAT, 0, 24,
+                                   transmute(0usize));
+            gl.EnableVertexAttribArray(1);
+            gl.VertexAttribPointer(1, 2, GL_HALF_FLOAT, 0, 24,
+                                   transmute(4usize));
+            gl.EnableVertexAttribArray(2);
+            gl.VertexAttribPointer(2, 4, GL_HALF_FLOAT, 0, 24,
+                                   transmute(8usize));
+            gl.EnableVertexAttribArray(3);
+            gl.VertexAttribPointer(3, 4, GL_HALF_FLOAT, 0, 24,
+                                   transmute(16usize));
+            // and the quadra!
+            gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, quadra);
+            // (Note: the Xusize values are being shoved into a pointer
+            // parameter, but since we're using VBOs, the pointers aren't
+            // really pointers, but offsets into the VBO!)
+        } assertgl(gl, "creating a new VBO").unwrap();
+        Buf { vbo, fence: None, vaos }
+    }
 }
 
 /// Renders using OpenGL 3.0 Core.
@@ -28,21 +82,26 @@ struct OpenGL32 {
     last_batch_type: LastBatchType,
     program_model: GLuint,
     program_text: GLuint,
-    vaos: [GLuint; 2],
     bound_texture: Option<GLuint>,
     force_multisample: bool,
+    bufs: Vec<Buf>,
+    cur_buf: usize,
+    quadra: GLuint,
 }
 
-const BUF_SIZE: usize = 262128; // 256KiB at a time, exactly 16383 elements
-// ^^^ if you change this, make sure it's a multiple of 48! ^^^
-// it needs to contain an integer number of entire triangles!
+/// Number of bytes to make our VBOs
+const BUF_SIZE: usize = 262144; // 256KiB at a time
+/// Number of indices to put into our IBO (is that a thing?)
+const QUADRA_COUNT: usize = BUF_SIZE / (size_of::<MergedTextVert>()*4);
+/// Number of bytes to make our IBO
+const QUADRA_SIZE: usize = QUADRA_COUNT * 6 * 2;
 
-const MULTISAMPLE_COVERAGE_TEST_BATCH: &[BatchModelVert] = &[
-    BatchModelVert { x: -1.0, y: -1.0,
-                     r: f16::ONE, g: f16::ZERO, b: f16::ONE, a: f16::ONE },
-    BatchModelVert { x: 1.0, y: -1.0,
-                     r: f16::ONE, g: f16::ZERO, b: f16::ONE, a: f16::ONE },
-    BatchModelVert { x: -1.0, y: 1.0,
+const MULTISAMPLE_COVERAGE_TEST_BATCH: &[MergedModelVert] = &[
+    MergedModelVert { x: -1.0, y: -1.0,
+                      r: f16::ONE, g: f16::ZERO, b: f16::ONE, a: f16::ONE },
+    MergedModelVert { x: 1.0, y: -1.0,
+                      r: f16::ONE, g: f16::ZERO, b: f16::ONE, a: f16::ONE },
+    MergedModelVert { x: -1.0, y: 1.0,
                      r: f16::ONE, g: f16::ZERO, b: f16::ONE, a: f16::ONE },
 ];
 
@@ -53,11 +112,14 @@ const TEXT_FRAGMENT_TEXT: &[u8] = include_bytes!("gl32/text.glsl");
 /// Check for OpenGL errors. If there were any, complain.
 fn assertgl(gl: &Procs, wo: &str) -> anyhow::Result<()> {
     let mut errors = vec![];
-    loop {
+    'outer: loop {
         // Unsafe justification: glGetError is safe to call.
         let e = unsafe { gl.GetError() };
         if e == 0 { break }
-        errors.push(e);
+        for &(code, name) in ERROR_TABLE.iter() {
+            if code == e { errors.push(name); continue 'outer; }
+        }
+        errors.push("unknown");
     }
     if errors.len() == 0 { Ok(()) }
     else {
@@ -96,6 +158,7 @@ fn compile_shader(gl: &Procs, wat: &str, typ: GLenum, text: &[u8])
             warn!("Diagnostics were generated while compiling {}:\n{}", wat,
                   String::from_utf8_lossy(&info_log[..info_log.len()-1]));
         }
+        assertgl(gl, "compiling a shader").unwrap();
         Ok(shader)
     }
 }
@@ -129,12 +192,30 @@ fn link_program(gl: &Procs, wat: &str, shaders: &[GLuint])
             warn!("Diagnostics were generated while linking {}:\n{}", wat,
                   String::from_utf8_lossy(&info_log[..info_log.len()-1]));
         }
+        assertgl(gl, "linking a shader program").unwrap();
         Ok(program)
     }
 }
 
-/// Set up an OpenGL 3.0 rendering context.
-pub fn create<F>(video: &VideoSubsystem, builder_maker: &mut F)
+fn map_buffer(gl: &Procs, vbo: GLuint) -> &mut [u8] {
+    // Unsafe justification: holy cow mmap. also, our caller is responsible for
+    // fencing this access into safety, not us!
+    unsafe {
+        gl.BindBuffer(GL_ARRAY_BUFFER, vbo);
+        let ptr = gl.MapBufferRange(GL_ARRAY_BUFFER, 0, BUF_SIZE as GLsizeiptr,
+                                    GL_MAP_WRITE_BIT
+                                    | GL_MAP_UNSYNCHRONIZED_BIT
+                                    | GL_MAP_INVALIDATE_BUFFER_BIT
+                                    | GL_MAP_FLUSH_EXPLICIT_BIT);
+        if ptr.is_null() {
+            assertgl(gl, "mapping a buffer").unwrap()
+        }
+        std::slice::from_raw_parts_mut(transmute(ptr), BUF_SIZE)
+    }
+}
+
+/// Set up an OpenGL 3.2 rendering context.
+pub(crate) fn create<F>(video: &VideoSubsystem, builder_maker: &mut F)
     -> anyhow::Result<Box<dyn Renderer>>
 where F: FnMut() -> WindowBuilder
 {
@@ -199,10 +280,8 @@ where F: FnMut() -> WindowBuilder
     // Unsafe justification: Initial state for OpenGL context. All pointer
     // operations are statically-bounded, and an error check is performed
     // afterwards.
-    let mut vbo: GLuint = 0;
-    let mut vaos = [0; 2];
-    let force_multisample;
-    let (program_model, program_text);
+    let (program_model, program_text, bufs, force_multisample);
+    let mut quadra = 0;
     unsafe {
         // Compile and link the shaders... oh boy.
         let vshader = compile_shader(&gl, "the vertex shader",
@@ -220,36 +299,24 @@ where F: FnMut() -> WindowBuilder
         gl.DeleteShader(vshader);
         gl.DeleteShader(fshader_model);
         gl.DeleteShader(fshader_text);
-        // Generate a buffer object to use to stream the vertices
-        gl.GenBuffers(1, &mut vbo);
-        gl.BindBuffer(GL_ARRAY_BUFFER, vbo);
-        // Generate two VAOs, one for rendering model, one for rendering text
-        gl.GenVertexArrays(2, &mut vaos[0]);
-        // Model: X___Y___R_G_B_A_
-        gl.BindVertexArray(vaos[0]);
-        gl.EnableVertexAttribArray(0);
-        gl.VertexAttribPointer(0, 2, GL_FLOAT, 0, 16,
-                               transmute(0usize));
-        gl.EnableVertexAttribArray(2);
-        gl.VertexAttribPointer(2, 4, GL_HALF_FLOAT, 0, 16,
-                               transmute(8usize));
-        // Text: X_Y_U_V_R1G1B1A1R2G2B2A2
-        gl.BindVertexArray(vaos[1]);
-        gl.EnableVertexAttribArray(0);
-        gl.VertexAttribPointer(0, 2, GL_HALF_FLOAT, 0, 24,
-                               transmute(0usize));
-        gl.EnableVertexAttribArray(1);
-        gl.VertexAttribPointer(1, 2, GL_HALF_FLOAT, 0, 24,
-                               transmute(4usize));
-        gl.EnableVertexAttribArray(2);
-        gl.VertexAttribPointer(2, 4, GL_HALF_FLOAT, 0, 24,
-                               transmute(8usize));
-        gl.EnableVertexAttribArray(3);
-        gl.VertexAttribPointer(3, 4, GL_HALF_FLOAT, 0, 24,
-                               transmute(16usize));
-        // (Note: the Xusize values are being shoved into a pointer parameter,
-        // but since we're using VBOs, the pointers aren't really pointers, but
-        // offsets into the VBO!)
+        // Generate a buffer object to render "quads" into
+        gl.GenBuffers(1, &mut quadra);
+        gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, quadra);
+        let mut quadra_buf = Vec::with_capacity(QUADRA_COUNT * 6);
+        assert!(QUADRA_COUNT < 65536 / 4);
+        for n in 0 .. QUADRA_COUNT as u16 {
+            quadra_buf.push(n*4);
+            quadra_buf.push(n*4+1);
+            quadra_buf.push(n*4+2);
+            quadra_buf.push(n*4+2);
+            quadra_buf.push(n*4+3);
+            quadra_buf.push(n*4);
+        }
+        gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, QUADRA_SIZE as GLsizeiptr,
+                      transmute(&quadra_buf[0]),
+                      GL_STATIC_DRAW);
+        let buf = Buf::new(&gl, quadra);
+        gl.BindBuffer(GL_ARRAY_BUFFER, buf.vbo);
         // Do linear-to-sRGB compression before writing to the framebuffer and
         // decompression after reading (for blending)
         gl.Enable(GL_FRAMEBUFFER_SRGB);
@@ -270,13 +337,12 @@ where F: FnMut() -> WindowBuilder
         // force multisampling to be used.
         gl.ClearColor(0.0, 1.0, 0.0, 0.0);
         gl.Clear(GL_COLOR_BUFFER_BIT);
-        gl.BindVertexArray(vaos[0]);
+        gl.BindVertexArray(buf.vaos[0]);
         gl.UseProgram(program_model);
         gl.Disable(GL_MULTISAMPLE);
-        gl.BufferData(GL_ARRAY_BUFFER,
-                      (size_of::<BatchModelVert>()*3) as GLsizeiptr,
-                      transmute(&MULTISAMPLE_COVERAGE_TEST_BATCH[0]),
-                      GL_STREAM_DRAW);
+        gl.BufferSubData(GL_ARRAY_BUFFER, 0,
+                         (size_of::<MergedModelVert>()*3) as GLsizeiptr,
+                         transmute(&MULTISAMPLE_COVERAGE_TEST_BATCH[0]));
         gl.DrawArrays(GL_TRIANGLES, 0, 3);
         gl.Enable(GL_MULTISAMPLE);
         let mut testfb = 0;
@@ -322,18 +388,25 @@ where F: FnMut() -> WindowBuilder
                 true
             };
         }
+        gl.DeleteFramebuffers(1, &testfb);
+        gl.DeleteTextures(1, &testtex);
+        bufs = vec![buf];
     } assertgl(&gl, "initializing the context")?;
     Ok(Box::new(OpenGL32 {
         window, ctx, gl, last_batch_type: LastBatchType::None,
-        program_model, program_text, bound_texture: None, vaos,
-        force_multisample,
+        program_model, program_text, bound_texture: None,
+        force_multisample, bufs, cur_buf: 0, quadra,
     }))
 }
 
 impl Renderer for OpenGL32 {
-    fn start_rendering(&mut self) -> anyhow::Result<()> {
+    fn begin_rendering(&mut self) -> anyhow::Result<()> {
         self.window.gl_make_current(&self.ctx)
-            .map_err(|x| anyhow!("OpenGL context lost! {}", x))
+            .map_err(|x| anyhow!("OpenGL context lost! {}", x))?;
+        assertgl(&self.gl, "starting rendering (this means the error probably \
+                            occurred while rendering the last frame, but \
+                            wasn't caught when it arose)").unwrap();
+        Ok(())
     }
     fn clear(&mut self, r: f32, g: f32, b: f32, a: f32) {
         let gl = &self.gl;
@@ -342,67 +415,12 @@ impl Renderer for OpenGL32 {
         unsafe {
             gl.ClearColor(r, g, b, a);
             gl.Clear(GL_COLOR_BUFFER_BIT);
-        }
-    }
-    fn render_model_batch(&mut self, batch: &[BatchModelVert]) {
-        let gl = &self.gl;
-        // Unsafe justification: Passing in data. Every time we have data to
-        // pass in, we are passing a slice. We provide the slice pointer and
-        // its size-converted length at every turn. We check errors at
-        // completion.
-        unsafe {
-            if self.last_batch_type != LastBatchType::Model {
-                gl.BindVertexArray(self.vaos[0]);
-                gl.UseProgram(self.program_model);
-                if !self.force_multisample {
-                    gl.Enable(GL_MULTISAMPLE);
-                }
-                gl.Disable(GL_TEXTURE_2D);
-                self.last_batch_type = LastBatchType::Model;
-                assertgl(gl, "switching to the model shader").unwrap();
-            }
-            // assertion: our vbo is still bound
-            for seg in batch.chunks(BUF_SIZE / size_of::<BatchModelVert>()) {
-                let chunksize
-                    = (seg.len() * size_of::<BatchModelVert>()) as GLsizeiptr;
-                gl.BufferData(GL_ARRAY_BUFFER, chunksize,
-                              null(), GL_STREAM_DRAW);
-                gl.BufferSubData(GL_ARRAY_BUFFER, 0,
-                                 chunksize, transmute(seg.as_ptr()));
-                gl.DrawArrays(GL_TRIANGLES, 0, seg.len() as GLint);
-            }
-        } assertgl(gl, "rendering a model batch").unwrap();
-    }
-    fn render_text_batch(&mut self, atlas: u32, batch: &[BatchTextVert]) {
-        let gl = &self.gl;
-        // Unsafe justification: see render_model_batch
-        // addendum: we assume that `atlas` is a valid texture ID, but if it
-        // isn't, an OpenGL error will be raised.
-        unsafe {
-            if self.last_batch_type != LastBatchType::Text {
-                gl.BindVertexArray(self.vaos[1]);
-                gl.UseProgram(self.program_text);
-                if !self.force_multisample {
-                    gl.Disable(GL_MULTISAMPLE);
-                }
-                gl.Enable(GL_TEXTURE_2D);
-                self.last_batch_type = LastBatchType::Text;
-                assertgl(gl, "switching to the text shader").unwrap();
-            }
-            gl.BindTexture(GL_TEXTURE_2D, atlas);
-            // assertion: our vbo is still bound
-            for seg in batch.chunks(BUF_SIZE / size_of::<BatchTextVert>()) {
-                let chunksize
-                    = (seg.len() * size_of::<BatchTextVert>()) as GLsizeiptr;
-                gl.BufferData(GL_ARRAY_BUFFER, chunksize,
-                              null(), GL_STREAM_DRAW);
-                gl.BufferSubData(GL_ARRAY_BUFFER, 0,
-                                 chunksize, transmute(seg.as_ptr()));
-                gl.DrawArrays(GL_QUADS, 0, seg.len() as GLint);
-            }
-        } assertgl(gl, "rendering a text batch").unwrap();
+        } assertgl(gl, "clearing the screen").unwrap();
     }
     fn present(&mut self) {
+        assertgl(&self.gl, "finishing rendering (this means the error \
+                            probably occurred while rendering this frame, \
+                            but wasn't caught when it arose)").unwrap();
         self.window.gl_swap_window();
     }
     fn get_size(&self) -> (u32, u32) {
@@ -430,7 +448,8 @@ impl Renderer for OpenGL32 {
             // round max_size up to the nearest >= power of two
             max_size = 0x40000000
                 >> i32::leading_zeros(max_size).saturating_sub(2);
-            // if it's small, double it
+            // if it's small, double it (the spec says this should be rejected,
+            // but, hey, maybe we'll get "lucky")
             if max_size < 32768 {
                 max_size = max_size * 2;
             }
@@ -442,12 +461,14 @@ impl Renderer for OpenGL32 {
                 let mut got_width = 0;
                 gl.GetTexLevelParameteriv(GL_PROXY_TEXTURE_2D, 0,
                                           GL_TEXTURE_WIDTH, &mut got_width);
+                // (discard errors)
+                while gl.GetError() != GL_NO_ERROR {}
                 if got_width == max_size {
                     return max_size as u32;
                 }
                 max_size /= 2;
             }
-        } assertgl(gl, "checking the maximum texture size").unwrap();
+        }
         panic!("Your OpenGL implementation appears to have an absurdly small \
                 maximum texture size!");
     }
@@ -459,7 +480,7 @@ impl Renderer for OpenGL32 {
         unsafe {
             gl.GenTextures(1, &mut texture);
             gl.BindTexture(GL_TEXTURE_2D, texture);
-            gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGB as GLint,
+            gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGB8 as GLint,
                           atlas_size as GLsizei, atlas_size as GLsizei, 0,
                           GL_RGB, GL_UNSIGNED_BYTE, null());
             gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
@@ -493,5 +514,134 @@ impl Renderer for OpenGL32 {
                              GL_RGB, GL_UNSIGNED_BYTE, transmute(&pixels[0]));
         } assertgl(gl, "uploading a glyph image").unwrap();
         Ok(())
+    }
+    fn open_model_batch(&mut self) -> ModelBatch {
+        ModelBatch::Merged(MergedModelBatch::new(self.map_next_buf()))
+    }
+    fn consume_model_batch(&mut self, batch: ModelBatch) {
+        let gl = &self.gl;
+        // might be nice for safety if we confirmed that this batch was the
+        // one we mapped. (shrug)
+        let mut batch = match batch {
+            ModelBatch::Merged(x) => x,
+            ModelBatch::Split(_) => panic!("We can't render split model \
+                                            batches, and we don't hand them \
+                                            out"),
+        };
+        // Unsafe justification: Trivial GL calls. We get all the sizes right,
+        // I promise.
+        unsafe {
+            gl.FlushMappedBufferRange(GL_ARRAY_BUFFER, 0,
+                                      (batch.n * size_of::<MergedModelVert>())
+                                      as GLsizeiptr);
+            gl.UnmapBuffer(GL_ARRAY_BUFFER);
+            if self.last_batch_type != LastBatchType::Model {
+                gl.BindVertexArray(self.bufs[self.cur_buf].vaos[0]);
+                gl.UseProgram(self.program_model);
+                if !self.force_multisample {
+                    gl.Enable(GL_MULTISAMPLE);
+                }
+                self.last_batch_type = LastBatchType::Model;
+                assertgl(gl, "switching to the model shader").unwrap();
+            }
+            gl.DrawArrays(GL_TRIANGLES, 0, batch.n as GLint);
+            match self.bufs[self.cur_buf].fence.take() {
+                None => (),
+                Some(x) => { gl.DeleteSync(x); }
+            }
+            self.bufs[self.cur_buf].fence = Some(gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
+            self.cur_buf = (self.cur_buf + 1) % self.bufs.len();
+        } assertgl(gl, "rendering a model batch").unwrap();
+    }
+    fn new_text_batch(&mut self) -> TextBatch {
+        TextBatch::Merged(MergedTextBatch::new())
+    }
+    fn render_text_batch(&mut self, atlases: &[u32],
+                         batch: TextBatch) {
+        // TODO: more efficient text rendering. We still can't know ahead of
+        // time all the separate VBOs we might put it into, but what we CAN do
+        // is map a VBO, copy several accumulated atlases' worth of text verts
+        // into it, and render each subset that's in the buffer. We'll need a
+        // new API design for that. For now, let's just make things keep work-
+        // ing.
+        let batch = match batch {
+            TextBatch::Merged(x) => x,
+            TextBatch::Split(_) => panic!("We can't render split text \
+                                           batches, and we don't hand them \
+                                           out"),
+        };
+        // Unsafe justification: Passing in data. Every time we have data to
+        // pass in, we are passing a slice. We provide the slice pointer and
+        // its size-converted length at every turn. We check errors at
+        // completion.
+        // addendum: we assume that `atlas` is a valid texture ID, but if it
+        // isn't, an OpenGL error will be raised.
+        unsafe {
+            if self.last_batch_type != LastBatchType::Text {
+                let gl = &self.gl;
+                gl.BindVertexArray(self.bufs[self.cur_buf].vaos[1]);
+                gl.UseProgram(self.program_text);
+                if !self.force_multisample {
+                    gl.Disable(GL_MULTISAMPLE);
+                }
+                self.last_batch_type = LastBatchType::Text;
+                assertgl(gl, "switching to the text shader").unwrap();
+            }
+            for (&atlas, verts) in atlases.iter().zip(batch.verts.iter()) {
+                if verts.len() == 0 { continue }
+                self.gl.BindTexture(GL_TEXTURE_2D, atlas);
+                let next_buf = self.get_next_buf();
+                let vbo = self.bufs[next_buf].vbo;
+                self.gl.BindBuffer(GL_ARRAY_BUFFER, vbo);
+                let gl = &self.gl;
+                for seg in verts.chunks(QUADRA_COUNT*4) {
+                    let chunksize
+                        = (seg.len() * size_of::<MergedTextVert>())
+                        as GLsizeiptr;
+                    gl.BufferSubData(GL_ARRAY_BUFFER, 0,
+                                     chunksize, transmute(seg.as_ptr()));
+                    gl.DrawElements(GL_TRIANGLES,
+                                    (seg.len() / 4 * 6) as GLint,
+                                    GL_UNSIGNED_SHORT, null());
+                }
+                self.bufs[self.cur_buf].fence = Some(gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
+                self.cur_buf = (self.cur_buf + 1) % self.bufs.len();
+            }
+        } assertgl(&self.gl, "rendering a text batch").unwrap();
+    }
+}
+
+impl OpenGL32 {
+    fn get_next_buf(&mut self) -> usize {
+                let gl = &self.gl;
+        if let Some(fence) = self.bufs[self.cur_buf].fence {
+            // Unsafe justification: No pointers. Errors all defined to result
+            // in GL errors, not UB.
+            unsafe {
+                match gl.ClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 0) {
+                    GL_ALREADY_SIGNALED | GL_CONDITION_SATISFIED => {
+                        // so we never wait on the same fence twice
+                        self.bufs[self.cur_buf].fence = None;
+                    },
+                    GL_TIMEOUT_EXPIRED => {
+                        // fence isn't ready, what we do next depends on how
+                        // many bufs there are (TODO: that)
+                        trace!("All VBOs in use. Making a new one. ({})",
+                               self.bufs.len()+1);
+                        let buf = Buf::new(gl, self.quadra);
+                        debug_assert_eq!(buf.fence, None);
+                        self.bufs.insert(self.cur_buf, buf);
+                    },
+                    _ => {
+                        assertgl(gl, "waiting on a fence").unwrap();
+                    }
+                }
+            }
+        }
+        self.cur_buf
+    }
+    fn map_next_buf(&mut self) -> &mut [u8] {
+        let next_buf = self.get_next_buf();
+        map_buffer(&self.gl, self.bufs[next_buf].vbo)
     }
 }

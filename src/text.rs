@@ -2,21 +2,20 @@ use crate::*;
 
 use std::rc::Rc;
 
-use psilo_text::{TextHandler, AtlasHandler};
+use psilo_text::{TextHandler as PsiloTextHandler, AtlasHandler};
 use rustybuzz::{Face, UnicodeBuffer};
 
 /// a struct that contains all the information we need to make a new glyph
-/// and/Sigor atlas
+/// and/or atlas
 struct TBnR<'a> {
     atlases: &'a mut Vec<u32>,
     atlas_size: u32, atlas_recip_size: f32,
     renderer: &'a mut Box<dyn Renderer>,
 }
 
-pub struct TextBatch {
+pub(crate) struct TextHandler {
     atlases: Vec<u32>,
-    batches: Vec<Vec<BatchTextVert>>,
-    text_handler: TextHandler<u32, AtlasCoords>,
+    text_handler: PsiloTextHandler<u32, AtlasCoords>,
     atlas_size: u32,
     // the reciprocal of the atlas size (always exact if the atlas size is a
     // power of two)
@@ -70,12 +69,12 @@ impl<'a> AtlasHandler for TBnR<'a> {
     }
 }
 
-impl TextBatch {
-    pub fn new(renderer: &mut Box<dyn Renderer>) -> TextBatch {
+impl TextHandler {
+    pub fn new(renderer: &mut Box<dyn Renderer>) -> TextHandler {
         let atlas_size = renderer.get_text_atlas_size();
-        TextBatch { atlases: vec![], batches: vec![],
-                    text_handler: TextHandler::new(),
-                    atlas_size, atlas_recip_size: 1.0 / (atlas_size as f32) }
+        TextHandler { atlases: vec![],
+                      text_handler: PsiloTextHandler::new(),
+                      atlas_size, atlas_recip_size: 1.0 / (atlas_size as f32) }
     }
     pub fn add_face(&mut self, face_data: Rc<Vec<u8>>, index: u32,
                     border_texels: f32, texels_per_em_x: f32,
@@ -92,11 +91,14 @@ impl TextBatch {
     pub fn get_face_mut(&mut self, i: usize) -> Option<&mut Face> {
         self.text_handler.get_face_mut(i)
     }
-    pub fn batch_text(&mut self,
-                      renderer: &mut Box<dyn Renderer>,
-                      face_id: u32, fill_color: Color, stroke_color: Color,
-                      x_align: f32, rtl: bool,
-                      transform: &Transform, text: &str) {
+    pub fn batch_text<B>(&mut self,
+                         renderer: &mut Box<dyn Renderer>,
+                         batch: &mut B,
+                         face_id: u32, fill_color: Color, stroke_color: Color,
+                         x_align: f32, rtl: bool,
+                         transform: &Transform, text: &str)
+    where B: TextBatchable
+    {
         let face = self.text_handler.get_face(face_id as usize).unwrap();
         let mut buf = UnicodeBuffer::new();
         use rustybuzz::Direction;
@@ -119,67 +121,33 @@ impl TextBatch {
             let y_advance = position.y_advance as f32 * em_per;
             let glyph = self.text_handler.get_glyph(face_id as usize, info.glyph_id as u16, &mut TBnR { atlases: &mut self.atlases, atlas_size: self.atlas_size, atlas_recip_size: self.atlas_recip_size, renderer }).unwrap();
             match glyph {
-                Some((textureid, coords)) => {
+                Some((atlas, coords)) => {
                     let x_offset = position.x_offset as f32 * em_per;
                     let y_offset = position.y_offset as f32 * em_per;
                     let p1 = Point::new(x + coords.x1+x_offset,
                                         y + coords.y1+y_offset);
                     let p1 = transform.transform_point(&p1);
                     let p2 = Point::new(x + coords.x2+x_offset,
-                                        y + coords.y2+y_offset);
+                                        y + coords.y1+y_offset);
                     let p2 = transform.transform_point(&p2);
-                    while textureid as usize >= self.batches.len() {
-                        self.batches.push(vec![]);
-                    }
-                    let batch = &mut self.batches[textureid as usize];
-                    batch.push(BatchTextVert { u: coords.u1, v: coords.v1,
-                                               x: f16::from_f32(p1.x),
-                                               y: f16::from_f32(p1.y),
-                                               fill_r: fill_color.r,
-                                               fill_g: fill_color.g,
-                                               fill_b: fill_color.b,
-                                               fill_a: fill_color.a,
-                                               stroke_r: stroke_color.r,
-                                               stroke_g: stroke_color.g,
-                                               stroke_b: stroke_color.b,
-                                               stroke_a: stroke_color.a,
-                    });
-                    batch.push(BatchTextVert { u: coords.u2, v: coords.v1,
-                                               x: f16::from_f32(p2.x),
-                                               y: f16::from_f32(p1.y),
-                                               fill_r: fill_color.r,
-                                               fill_g: fill_color.g,
-                                               fill_b: fill_color.b,
-                                               fill_a: fill_color.a,
-                                               stroke_r: stroke_color.r,
-                                               stroke_g: stroke_color.g,
-                                               stroke_b: stroke_color.b,
-                                               stroke_a: stroke_color.a,
-                    });
-                    batch.push(BatchTextVert { u: coords.u2, v: coords.v2,
-                                               x: f16::from_f32(p2.x),
-                                               y: f16::from_f32(p2.y),
-                                               fill_r: fill_color.r,
-                                               fill_g: fill_color.g,
-                                               fill_b: fill_color.b,
-                                               fill_a: fill_color.a,
-                                               stroke_r: stroke_color.r,
-                                               stroke_g: stroke_color.g,
-                                               stroke_b: stroke_color.b,
-                                               stroke_a: stroke_color.a,
-                    });
-                    batch.push(BatchTextVert { u: coords.u1, v: coords.v2,
-                                               x: f16::from_f32(p1.x),
-                                               y: f16::from_f32(p2.y),
-                                               fill_r: fill_color.r,
-                                               fill_g: fill_color.g,
-                                               fill_b: fill_color.b,
-                                               fill_a: fill_color.a,
-                                               stroke_r: stroke_color.r,
-                                               stroke_g: stroke_color.g,
-                                               stroke_b: stroke_color.b,
-                                               stroke_a: stroke_color.a,
-                    });
+                    let p3 = Point::new(x + coords.x2+x_offset,
+                                        y + coords.y2+y_offset);
+                    let p3 = transform.transform_point(&p3);
+                    let p4 = Point::new(x + coords.x1+x_offset,
+                                        y + coords.y2+y_offset);
+                    let p4 = transform.transform_point(&p4);
+                    batch.push(atlas,
+                               p1.x, p1.y, coords.u1, coords.v1,
+                               fill_color, stroke_color);
+                    batch.push(atlas,
+                               p2.x, p2.y, coords.u2, coords.v1,
+                               fill_color, stroke_color);
+                    batch.push(atlas,
+                               p3.x, p3.y, coords.u2, coords.v2,
+                               fill_color, stroke_color);
+                    batch.push(atlas,
+                               p4.x, p4.y, coords.u1, coords.v2,
+                               fill_color, stroke_color);
                 },
                 None => (),
             };
@@ -187,12 +155,5 @@ impl TextBatch {
             y += y_advance;
         }
     }
-    pub fn render(&mut self, renderer: &mut Box<dyn Renderer>) {
-        for (&atlas, batch) in self.atlases.iter().zip(self.batches.iter_mut()) {
-            if batch.len() > 0 {
-                renderer.render_text_batch(atlas, batch);
-                batch.clear();
-            }
-        }
-    }
+    pub(crate) fn get_atlases(&self) -> &[u32] { &self.atlases }
 }
