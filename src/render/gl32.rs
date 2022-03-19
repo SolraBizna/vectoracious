@@ -440,7 +440,6 @@ where F: FnMut() -> WindowBuilder
         gl.BindVertexArray(testvao);
         let mut testvb = 0;
         gl.GenBuffers(1, &mut testvb);
-        assertgl(&gl, "fuck").unwrap();
         gl.EnableVertexAttribArray(0);
         gl.VertexAttribPointer(0, 2, GL_FLOAT, 0, 12,
                                transmute(0usize));
