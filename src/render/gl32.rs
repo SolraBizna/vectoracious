@@ -353,18 +353,34 @@ where F: FnMut() -> WindowBuilder
         gl.BindBuffer(GL_ARRAY_BUFFER, quad_vb);
         gl.BufferData(GL_ARRAY_BUFFER, BUF_SIZE as GLsizeiptr, null(),
                       GL_DYNAMIC_DRAW);
-        // TODO: gl.GetAttribLocation
-        gl.EnableVertexAttribArray(0);
-        gl.VertexAttribPointer(0, 2, GL_HALF_FLOAT, 0, 24,
+        // Text: X_Y_U_V_R_G_B_A_R_G_B_A_
+        let loc = gl.GetAttribLocation(program_text, transmute(b"pos\0"));
+        if loc < 0 {
+            assertgl(&gl, "looking for text shader attribute \"pos\"")?;
+        }
+        gl.EnableVertexAttribArray(loc as u32);
+        gl.VertexAttribPointer(loc as u32, 2, GL_HALF_FLOAT, 0, 24,
                                transmute(0usize));
-        gl.EnableVertexAttribArray(1);
-        gl.VertexAttribPointer(1, 2, GL_HALF_FLOAT, 0, 24,
+        let loc = gl.GetAttribLocation(program_text, transmute(b"uv_in\0"));
+        if loc < 0 {
+            assertgl(&gl, "looking for text shader attribute \"uv_in\"")?;
+        }
+        gl.EnableVertexAttribArray(loc as u32);
+        gl.VertexAttribPointer(loc as u32, 2, GL_HALF_FLOAT, 0, 24,
                                transmute(4usize));
-        gl.EnableVertexAttribArray(2);
-        gl.VertexAttribPointer(2, 4, GL_HALF_FLOAT, 0, 24,
+        let loc = gl.GetAttribLocation(program_text, transmute(b"vert_fillcolor\0"));
+        if loc < 0 {
+            assertgl(&gl, "looking for text shader attribute \"vert_fillcolor\"")?;
+        }
+        gl.EnableVertexAttribArray(loc as u32);
+        gl.VertexAttribPointer(loc as u32, 4, GL_HALF_FLOAT, 0, 24,
                                transmute(8usize));
-        gl.EnableVertexAttribArray(3);
-        gl.VertexAttribPointer(3, 4, GL_HALF_FLOAT, 0, 24,
+        let loc = gl.GetAttribLocation(program_text, transmute(b"vert_strokecolor\0"));
+        if loc < 0 {
+            assertgl(&gl, "looking for text shader attribute \"vert_strokecolor\"")?;
+        }
+        gl.EnableVertexAttribArray(loc as u32);
+        gl.VertexAttribPointer(loc as u32, 4, GL_HALF_FLOAT, 0, 24,
                                transmute(16usize));
         // Do linear-to-sRGB compression before writing to the framebuffer and
         // decompression after reading (for blending)
