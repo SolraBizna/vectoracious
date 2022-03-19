@@ -52,18 +52,22 @@ impl<'a> AtlasHandler for TBnR<'a> {
         self.renderer.new_text_glyph(self.atlases[atlas as usize],
                                      glyph_x, glyph_y,
                                      glyph_w, glyph_h, pixels)?;
-        let u1 = (glyph_x as f32 + 0.5) * self.atlas_recip_size;
-        let v1 = (glyph_y as f32 + 0.5) * self.atlas_recip_size;
-        let u2 = u1 + (glyph_w as f32 - 1.0) * self.atlas_recip_size;
-        let v2 = v1 + (glyph_h as f32 - 1.0) * self.atlas_recip_size;
+        let u1 = (glyph_x as f32 + 1.0) * self.atlas_recip_size;
+        let v1 = (glyph_y as f32 + 1.0) * self.atlas_recip_size;
+        let u2 = u1 + (glyph_w as f32 - 2.0) * self.atlas_recip_size;
+        let v2 = v1 + (glyph_h as f32 - 2.0) * self.atlas_recip_size;
         let u1 = f16::from_f32(u1);
         let v1 = f16::from_f32(v1);
         let u2 = f16::from_f32(u2);
         let v2 = f16::from_f32(v2);
-        let x1 = render_x_min;
-        let x2 = render_x_max;
-        let y1 = render_y_min;
-        let y2 = render_y_max;
+        let render_w = render_x_max - render_x_min;
+        let render_h = render_y_max - render_y_min;
+        let full_w = glyph_w as f32;
+        let full_h = glyph_h as f32;
+        let x1 = render_x_min + render_w * 1.0 / full_w;
+        let x2 = render_x_max - render_w * 1.0 / full_w;
+        let y1 = render_y_min + render_h * 1.0 / full_h;
+        let y2 = render_y_max - render_h * 1.0 / full_h;
         Ok(AtlasCoords { u1, v1, u2, v2, x1, x2, y1, y2 })
 
     }
