@@ -39,7 +39,8 @@ struct ModelCache {
 
 impl ModelCache {
     fn new() -> ModelCache { ModelCache { models: HashMap::new() } }
-    fn get_or_make_cached(&mut self, gl: &Procs, model: &Model) -> &CachedModel {
+    fn get_or_make_cached(&mut self, gl: &Procs, program_model: GLuint,
+                          model: &Model) -> &CachedModel {
         self.models.entry(model.unique_id)
             .or_insert_with(|| {
                 let verts: Vec<ModelVert> = model.points.iter()
@@ -70,12 +71,24 @@ impl ModelCache {
                                   GL_STATIC_DRAW);
                     // Model: X___Y___C___
                     gl.BindVertexArray(vao);
-                    gl.EnableVertexAttribArray(0);
-                    gl.VertexAttribPointer(0, 2, GL_FLOAT, 0, 12,
+                    let loc = gl.GetAttribLocation(program_model,
+                                                   transmute(b"pos\0"));
+                    if loc < 0 {
+                        assertgl(&gl, "looking for model shader attribute \
+                                       \"pos\"").unwrap();
+                    }
+                    gl.EnableVertexAttribArray(loc as GLuint);
+                    gl.VertexAttribPointer(loc as GLuint, 2, GL_FLOAT, 0, 12,
                                            transmute(0usize));
-                    gl.EnableVertexAttribArray(1);
-                    gl.VertexAttribIPointer(1, 1, GL_UNSIGNED_INT, 12,
-                                            transmute(8usize));
+                    let loc = gl.GetAttribLocation(program_model,
+                                                  transmute(b"color_index\0"));
+                    if loc < 0 {
+                        assertgl(&gl, "looking for model shader attribute \
+                                       \"color_index\"").unwrap();
+                    }
+                    gl.EnableVertexAttribArray(loc as GLuint);
+                    gl.VertexAttribIPointer(loc as GLuint, 1, GL_UNSIGNED_INT,
+                                            12, transmute(8usize));
                     gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, ib);
                     let mut indices: Vec<u16>
                         = Vec::with_capacity(model.triangles.len()*3);
@@ -358,29 +371,33 @@ where F: FnMut() -> WindowBuilder
         if loc < 0 {
             assertgl(&gl, "looking for text shader attribute \"pos\"")?;
         }
-        gl.EnableVertexAttribArray(loc as u32);
-        gl.VertexAttribPointer(loc as u32, 2, GL_HALF_FLOAT, 0, 24,
+        gl.EnableVertexAttribArray(loc as GLuint);
+        gl.VertexAttribPointer(loc as GLuint, 2, GL_HALF_FLOAT, 0, 24,
                                transmute(0usize));
         let loc = gl.GetAttribLocation(program_text, transmute(b"uv_in\0"));
         if loc < 0 {
             assertgl(&gl, "looking for text shader attribute \"uv_in\"")?;
         }
-        gl.EnableVertexAttribArray(loc as u32);
-        gl.VertexAttribPointer(loc as u32, 2, GL_HALF_FLOAT, 0, 24,
+        gl.EnableVertexAttribArray(loc as GLuint);
+        gl.VertexAttribPointer(loc as GLuint, 2, GL_HALF_FLOAT, 0, 24,
                                transmute(4usize));
-        let loc = gl.GetAttribLocation(program_text, transmute(b"vert_fillcolor\0"));
+        let loc = gl.GetAttribLocation(program_text,
+                                       transmute(b"vert_fillcolor\0"));
         if loc < 0 {
-            assertgl(&gl, "looking for text shader attribute \"vert_fillcolor\"")?;
+            assertgl(&gl, "looking for text shader attribute \
+                           \"vert_fillcolor\"")?;
         }
-        gl.EnableVertexAttribArray(loc as u32);
-        gl.VertexAttribPointer(loc as u32, 4, GL_HALF_FLOAT, 0, 24,
+        gl.EnableVertexAttribArray(loc as GLuint);
+        gl.VertexAttribPointer(loc as GLuint, 4, GL_HALF_FLOAT, 0, 24,
                                transmute(8usize));
-        let loc = gl.GetAttribLocation(program_text, transmute(b"vert_strokecolor\0"));
+        let loc = gl.GetAttribLocation(program_text,
+                                       transmute(b"vert_strokecolor\0"));
         if loc < 0 {
-            assertgl(&gl, "looking for text shader attribute \"vert_strokecolor\"")?;
+            assertgl(&gl, "looking for text shader attribute \
+                           \"vert_strokecolor\"")?;
         }
-        gl.EnableVertexAttribArray(loc as u32);
-        gl.VertexAttribPointer(loc as u32, 4, GL_HALF_FLOAT, 0, 24,
+        gl.EnableVertexAttribArray(loc as GLuint);
+        gl.VertexAttribPointer(loc as GLuint, 4, GL_HALF_FLOAT, 0, 24,
                                transmute(16usize));
         // Do linear-to-sRGB compression before writing to the framebuffer and
         // decompression after reading (for blending)
@@ -440,11 +457,21 @@ where F: FnMut() -> WindowBuilder
         gl.BindVertexArray(testvao);
         let mut testvb = 0;
         gl.GenBuffers(1, &mut testvb);
-        gl.EnableVertexAttribArray(0);
-        gl.VertexAttribPointer(0, 2, GL_FLOAT, 0, 12,
+        let loc = gl.GetAttribLocation(program_model, transmute(b"pos\0"));
+        if loc < 0 {
+            assertgl(&gl, "looking for model shader attribute \"pos\"")?;
+        }
+        gl.EnableVertexAttribArray(loc as GLuint);
+        gl.VertexAttribPointer(loc as GLuint, 2, GL_FLOAT, 0, 12,
                                transmute(0usize));
-        gl.EnableVertexAttribArray(1);
-        gl.VertexAttribIPointer(1, 1, GL_UNSIGNED_INT, 12,
+        let loc = gl.GetAttribLocation(program_model,
+                                       transmute(b"color_index\0"));
+        if loc < 0 {
+            assertgl(&gl, "looking for model shader attribute \
+                           \"color_index\"")?;
+        }
+        gl.EnableVertexAttribArray(loc as GLuint);
+        gl.VertexAttribIPointer(loc as GLuint, 1, GL_UNSIGNED_INT, 12,
                                 transmute(8usize));
         gl.BufferData(GL_ARRAY_BUFFER, 12 * 4,
                       transmute(&MULTISAMPLE_COVERAGE_TEST_BATCH[0]),
@@ -678,7 +705,9 @@ impl Renderer for OpenGL32 {
     fn render_model(&mut self, model: &Model,
                     transform: &Transform, color_overrides: &[Color],
                     opacity: f32) {
-        let cached = self.model_cache.get_or_make_cached(&self.gl, model);
+        let cached = self.model_cache.get_or_make_cached(&self.gl,
+                                                         self.program_model,
+                                                         model);
         let gl = &self.gl;
         unsafe {
             if self.last_batch_type != LastBatchType::Model {
