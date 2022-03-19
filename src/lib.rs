@@ -1,5 +1,4 @@
 use std::{
-    mem::replace,
     rc::Rc,
 };
 
@@ -23,38 +22,14 @@ pub type Rotation = nalgebra::Rotation2<f32>;
 pub type Scale = nalgebra::Scale2<f32>;
 pub type Translation = nalgebra::Translation2<f32>;
 
-enum Batch {
-    Nope,
-    Model(ModelBatch),
-    Text(TextBatch),
-}
-
-impl Batch {
-    fn take(&mut self) -> Batch {
-        replace(self, Batch::Nope)
-    }
-    fn is_model(&self) -> bool {
-        match self {
-            &Batch::Model(_) => true,
-            _ => false,
-        }
-    }
-    fn is_text(&self) -> bool {
-        match self {
-            &Batch::Text(_) => true,
-            _ => false,
-        }
-    }
-}
-
 pub struct Context {
     renderer: Box<dyn Renderer>,
     text_handler: TextHandler,
 }
 
 pub struct Render<'a> {
-    ctx: &'a mut Context, 
-    batch: Batch,
+    ctx: &'a mut Context,
+    text_batch: Option<TextBatch>,
 }
 
 impl Context {
@@ -71,7 +46,7 @@ impl Context {
     }
     pub fn begin_render(&mut self) -> anyhow::Result<Render> {
         self.renderer.begin_rendering()?;
-        Ok(Render { ctx: self, batch: Batch::Nope })
+        Ok(Render { ctx: self, text_batch: None })
     }
     pub fn add_face(
         &mut self,
@@ -104,63 +79,40 @@ impl Render<'_> {
         self.ctx.renderer.enable_blend();
     }
     pub fn flush(&mut self) {
-        match self.batch.take() {
-            Batch::Nope => (),
-            Batch::Model(b) => {
-                self.ctx.renderer.consume_model_batch(b);
-            },
-            Batch::Text(b) => {
+        match self.text_batch.take() {
+            None => (),
+            Some(b) => {
                 self.ctx.renderer.render_text_batch(self.ctx.text_handler.get_atlases(), b);
             },
         }
     }
-    fn ensure_model_batch(&mut self) {
-        if !self.batch.is_model() {
-            self.flush();
-            self.batch = Batch::Model(self.ctx.renderer.open_model_batch());
-        }
-    }
-    fn ensure_text_batch(&mut self) {
-        if !self.batch.is_text() {
-            self.flush();
-            self.batch = Batch::Text(self.ctx.renderer.new_text_batch());
-        }
-    }
     pub fn model(&mut self, model: &Model, transform: &Transform,
                  color_overrides: &[Color], opacity: f32) {
-        self.ensure_model_batch();
-        let batch = match self.batch.take() {
-            Batch::Model(ModelBatch::Merged(x)) => {
-                model.render(transform, color_overrides, opacity, x,
-                             &mut self.ctx.renderer)
-            },
-            Batch::Model(ModelBatch::Split(x)) => {
-                model.render(transform, color_overrides, opacity, x,
-                             &mut self.ctx.renderer)
-            },
-            _ => unreachable!(),
-        };
-        self.batch = Batch::Model(batch);
+        self.flush(); // only if it's text? TODO or something
+        self.ctx.renderer.render_model(model, transform, color_overrides,
+                                       opacity)
     }
     pub fn text(&mut self,
                 face_id: u32, fill_color: Color, stroke_color: Color,
                 x_align: f32, rtl: bool,
                 transform: &Transform, text: &str) {
-        self.ensure_text_batch();
-        match &mut self.batch {
-            Batch::Text(TextBatch::Merged(x)) => {
+        if self.text_batch.is_none() {
+            self.text_batch = Some(self.ctx.renderer.new_text_batch());
+        }
+        match &mut self.text_batch {
+            Some(TextBatch::Merged(x)) => {
                 self.ctx.text_handler.batch_text(&mut self.ctx.renderer,
                                                  x, face_id, fill_color,
                                                  stroke_color, x_align, rtl,
                                                  transform, text);
             },
-            Batch::Text(TextBatch::Split(x)) => {
+            Some(TextBatch::Split(x)) => {
                 self.ctx.text_handler.batch_text(&mut self.ctx.renderer,
                                                  x, face_id, fill_color,
                                                  stroke_color, x_align, rtl,
                                                  transform, text);
             },
-            _ => unreachable!(),
+            None => unreachable!(),
         };
     }
     pub fn end(mut self) {

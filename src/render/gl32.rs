@@ -1,12 +1,13 @@
 use super::*;
 
 use std::{
+    collections::HashMap,
     mem::{size_of, transmute},
     ptr::{null, null_mut},
 };
 
 use anyhow::anyhow;
-use log::{warn, debug, info, trace};
+use log::{warn, debug, info};
 use sdl2::{
     video::{GLContext, GLProfile, Window, WindowBuilder},
     VideoSubsystem,
@@ -22,55 +23,77 @@ enum LastBatchType {
     None, Model, Text
 }
 
-#[derive(Debug)]
-struct Buf {
-    vbo: GLuint,
-    fence: Option<GLsync>,
-    vaos: [GLuint; 2],
+#[derive(Debug)] #[repr(C)]
+struct ModelVert {
+    x: f32, y: f32, c: u32,
 }
 
-impl Buf {
-    pub fn new(gl: &Procs, quadra: GLuint) -> Buf {
-        let mut vbo = 0;
-        let mut vaos = [0; 2];
-        // unsafe justification: trivial
-        unsafe {
-            gl.GenBuffers(1, &mut vbo);
-            gl.BindBuffer(GL_ARRAY_BUFFER, vbo);
-            gl.BufferData(GL_ARRAY_BUFFER, BUF_SIZE as GLsizeiptr, null(),
-                          GL_DYNAMIC_DRAW);
-            // Generate two VAOs, one for rendering model, one for rendering
-            // text
-            gl.GenVertexArrays(2, &mut vaos[0]);
-            // Model: X___Y___R_G_B_A_
-            gl.BindVertexArray(vaos[0]);
-            gl.EnableVertexAttribArray(0);
-            gl.VertexAttribPointer(0, 2, GL_FLOAT, 0, 16,
-                                   transmute(0usize));
-            gl.EnableVertexAttribArray(2);
-            gl.VertexAttribPointer(2, 4, GL_HALF_FLOAT, 0, 16,
-                                   transmute(8usize));
-            // Text: X_Y_U_V_R1G1B1A1R2G2B2A2
-            gl.BindVertexArray(vaos[1]);
-            gl.EnableVertexAttribArray(0);
-            gl.VertexAttribPointer(0, 2, GL_HALF_FLOAT, 0, 24,
-                                   transmute(0usize));
-            gl.EnableVertexAttribArray(1);
-            gl.VertexAttribPointer(1, 2, GL_HALF_FLOAT, 0, 24,
-                                   transmute(4usize));
-            gl.EnableVertexAttribArray(2);
-            gl.VertexAttribPointer(2, 4, GL_HALF_FLOAT, 0, 24,
-                                   transmute(8usize));
-            gl.EnableVertexAttribArray(3);
-            gl.VertexAttribPointer(3, 4, GL_HALF_FLOAT, 0, 24,
-                                   transmute(16usize));
-            // and the quadra!
-            gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, quadra);
-            // (Note: the Xusize values are being shoved into a pointer
-            // parameter, but since we're using VBOs, the pointers aren't
-            // really pointers, but offsets into the VBO!)
-        } assertgl(gl, "creating a new VBO").unwrap();
-        Buf { vbo, fence: None, vaos }
+struct CachedModel {
+    vao: GLuint,
+    num_elements: GLint,
+}
+
+struct ModelCache {
+    models: HashMap<u32, CachedModel>,
+}
+
+impl ModelCache {
+    fn new() -> ModelCache { ModelCache { models: HashMap::new() } }
+    fn get_or_make_cached(&mut self, gl: &Procs, model: &Model) -> &CachedModel {
+        self.models.entry(model.unique_id)
+            .or_insert_with(|| {
+                let verts: Vec<ModelVert> = model.points.iter()
+                    .map(|p| {
+                        ModelVert {
+                            x: p.point.x,
+                            y: p.point.y,
+                            c: p.color_idx as u32,
+                        }
+                    }).collect();
+                let mut vao = 0;
+                let num_elements;
+                // Unsafe justification: okay, look, we're just gonna be using
+                // unsafe every time we talk to OpenGL. We aren't going to be
+                // able to avoid that. Okay? Okay.
+                unsafe {
+                    gl.GenVertexArrays(1, &mut vao);
+                    let mut vbos = [0; 2];
+                    gl.GenBuffers(2, &mut vbos[0]);
+                    let vb = vbos[0];
+                    let ib = vbos[1];
+                    gl.BindBuffer(GL_ARRAY_BUFFER, vb);
+                    let size = size_of::<ModelVert>() * verts.len();
+                    // something
+                    gl.BufferData(GL_ARRAY_BUFFER,
+                                  size as GLsizeiptr,
+                                  transmute(&verts[0]),
+                                  GL_STATIC_DRAW);
+                    // Model: X___Y___C___
+                    gl.BindVertexArray(vao);
+                    gl.EnableVertexAttribArray(0);
+                    gl.VertexAttribPointer(0, 2, GL_FLOAT, 0, 12,
+                                           transmute(0usize));
+                    gl.EnableVertexAttribArray(1);
+                    gl.VertexAttribIPointer(1, 1, GL_UNSIGNED_INT, 12,
+                                            transmute(8usize));
+                    gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, ib);
+                    let mut indices: Vec<u16>
+                        = Vec::with_capacity(model.triangles.len()*3);
+                    for &(a,b,c) in model.triangles.iter() {
+                        indices.push(a);
+                        indices.push(b);
+                        indices.push(c);
+                    }
+                    gl.BufferData(GL_ELEMENT_ARRAY_BUFFER,
+                                  (indices.len() * 2) as GLsizeiptr,
+                                  transmute(&indices[0]),
+                                  GL_STATIC_DRAW);
+                    num_elements = indices.len() as GLint;
+                }
+                CachedModel {
+                    vao, num_elements,
+                }
+            })
     }
 }
 
@@ -84,30 +107,31 @@ struct OpenGL32 {
     program_text: GLuint,
     bound_texture: Option<GLuint>,
     force_multisample: bool,
-    bufs: Vec<Buf>,
-    cur_buf: usize,
-    quadra: GLuint,
+    quad_vao: GLuint,
+    quad_vb: GLuint,
+    model_cache: ModelCache,
+    loc_transform: GLint,
+    loc_opacity: GLint,
+    loc_colors: GLint,
 }
 
 /// Number of bytes to make our VBOs
 const BUF_SIZE: usize = 262144; // 256KiB at a time
 /// Number of indices to put into our IBO (is that a thing?)
-const QUADRA_COUNT: usize = BUF_SIZE / (size_of::<MergedTextVert>()*4);
+const QUAD_IB_COUNT: usize = BUF_SIZE / (size_of::<MergedTextVert>()*4);
 /// Number of bytes to make our IBO
-const QUADRA_SIZE: usize = QUADRA_COUNT * 6 * 2;
+const QUAD_IB_SIZE: usize = QUAD_IB_COUNT * 6 * 2;
 
-const MULTISAMPLE_COVERAGE_TEST_BATCH: &[MergedModelVert] = &[
-    MergedModelVert { x: -1.0, y: -1.0,
-                      r: f16::ONE, g: f16::ZERO, b: f16::ONE, a: f16::ONE },
-    MergedModelVert { x: 1.0, y: -1.0,
-                      r: f16::ONE, g: f16::ZERO, b: f16::ONE, a: f16::ONE },
-    MergedModelVert { x: -1.0, y: 1.0,
-                     r: f16::ONE, g: f16::ZERO, b: f16::ONE, a: f16::ONE },
+const MULTISAMPLE_COVERAGE_TEST_BATCH: &[ModelVert] = &[
+    ModelVert { x: -1.0, y: -1.0, c: 0 },
+    ModelVert { x:  1.0, y: -1.0, c: 0 },
+    ModelVert { x: -1.0, y:  1.0, c: 0 },
 ];
 
-const VERTEX_TEXT: &[u8] = include_bytes!("gl32/vert.glsl");
-const MODEL_FRAGMENT_TEXT: &[u8] = include_bytes!("gl32/model.glsl");
-const TEXT_FRAGMENT_TEXT: &[u8] = include_bytes!("gl32/text.glsl");
+const MODEL_FRAGMENT_TEXT: &[u8] = include_bytes!("gl32/model.frag");
+const TEXT_FRAGMENT_TEXT: &[u8] = include_bytes!("gl32/text.frag");
+const MODEL_VERTEX_TEXT: &[u8] = include_bytes!("gl32/model.vert");
+const TEXT_VERTEX_TEXT: &[u8] = include_bytes!("gl32/text.vert");
 
 /// Check for OpenGL errors. If there were any, complain.
 fn assertgl(gl: &Procs, wo: &str) -> anyhow::Result<()> {
@@ -280,43 +304,68 @@ where F: FnMut() -> WindowBuilder
     // Unsafe justification: Initial state for OpenGL context. All pointer
     // operations are statically-bounded, and an error check is performed
     // afterwards.
-    let (program_model, program_text, bufs, force_multisample);
-    let mut quadra = 0;
+    let (program_model, program_text, force_multisample, quad_ib,
+         quad_vb, loc_transform, loc_opacity, loc_colors);
+    let mut quad_vao = 0;
     unsafe {
         // Compile and link the shaders... oh boy.
-        let vshader = compile_shader(&gl, "the vertex shader",
-                                     GL_VERTEX_SHADER, VERTEX_TEXT)?;
         let fshader_model = compile_shader(&gl, "the model fragment shader",
                                            GL_FRAGMENT_SHADER,
                                            MODEL_FRAGMENT_TEXT)?;
         let fshader_text = compile_shader(&gl, "the text fragment shader",
                                           GL_FRAGMENT_SHADER,
                                           TEXT_FRAGMENT_TEXT)?;
+        let vshader_model = compile_shader(&gl, "the model vertex shader",
+                                           GL_VERTEX_SHADER,
+                                           MODEL_VERTEX_TEXT)?;
+        let vshader_text = compile_shader(&gl, "the text vertex shader",
+                                          GL_VERTEX_SHADER,
+                                          TEXT_VERTEX_TEXT)?;
         program_model = link_program(&gl, "the model shader program",
-                                     &[vshader, fshader_model])?;
+                                     &[vshader_model, fshader_model])?;
         program_text = link_program(&gl, "the text shader program",
-                                    &[vshader, fshader_text])?;
-        gl.DeleteShader(vshader);
+                                    &[vshader_text, fshader_text])?;
+        gl.DeleteShader(vshader_model);
+        gl.DeleteShader(vshader_text);
         gl.DeleteShader(fshader_model);
         gl.DeleteShader(fshader_text);
-        // Generate a buffer object to render "quads" into
-        gl.GenBuffers(1, &mut quadra);
-        gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, quadra);
-        let mut quadra_buf = Vec::with_capacity(QUADRA_COUNT * 6);
-        assert!(QUADRA_COUNT < 65536 / 4);
-        for n in 0 .. QUADRA_COUNT as u16 {
-            quadra_buf.push(n*4);
-            quadra_buf.push(n*4+1);
-            quadra_buf.push(n*4+2);
-            quadra_buf.push(n*4+2);
-            quadra_buf.push(n*4+3);
-            quadra_buf.push(n*4);
+        // Generate buffers to render text "quads" into
+        gl.GenVertexArrays(1, &mut quad_vao);
+        gl.BindVertexArray(quad_vao);
+        let mut quad_vbos = [0; 2];
+        gl.GenBuffers(2, &mut quad_vbos[0]);
+        quad_ib = quad_vbos[0];
+        quad_vb = quad_vbos[1];
+        gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, quad_ib);
+        let mut quad_ib_buf = Vec::with_capacity(QUAD_IB_COUNT * 6);
+        assert!(QUAD_IB_COUNT < 65536 / 4);
+        for n in 0 .. QUAD_IB_COUNT as u16 {
+            quad_ib_buf.push(n*4);
+            quad_ib_buf.push(n*4+1);
+            quad_ib_buf.push(n*4+2);
+            quad_ib_buf.push(n*4+2);
+            quad_ib_buf.push(n*4+3);
+            quad_ib_buf.push(n*4);
         }
-        gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, QUADRA_SIZE as GLsizeiptr,
-                      transmute(&quadra_buf[0]),
+        gl.BufferData(GL_ELEMENT_ARRAY_BUFFER, QUAD_IB_SIZE as GLsizeiptr,
+                      transmute(&quad_ib_buf[0]),
                       GL_STATIC_DRAW);
-        let buf = Buf::new(&gl, quadra);
-        gl.BindBuffer(GL_ARRAY_BUFFER, buf.vbo);
+        gl.BindBuffer(GL_ARRAY_BUFFER, quad_vb);
+        gl.BufferData(GL_ARRAY_BUFFER, BUF_SIZE as GLsizeiptr, null(),
+                      GL_DYNAMIC_DRAW);
+        // TODO: gl.GetAttribLocation
+        gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 2, GL_HALF_FLOAT, 0, 24,
+                               transmute(0usize));
+        gl.EnableVertexAttribArray(1);
+        gl.VertexAttribPointer(1, 2, GL_HALF_FLOAT, 0, 24,
+                               transmute(4usize));
+        gl.EnableVertexAttribArray(2);
+        gl.VertexAttribPointer(2, 4, GL_HALF_FLOAT, 0, 24,
+                               transmute(8usize));
+        gl.EnableVertexAttribArray(3);
+        gl.VertexAttribPointer(3, 4, GL_HALF_FLOAT, 0, 24,
+                               transmute(16usize));
         // Do linear-to-sRGB compression before writing to the framebuffer and
         // decompression after reading (for blending)
         gl.Enable(GL_FRAMEBUFFER_SRGB);
@@ -324,25 +373,67 @@ where F: FnMut() -> WindowBuilder
         gl.BlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
         // We're gonna be uploading a lot of unaligned pixel data, yuck.
         gl.PixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        // Oh, and let's set the uniform!
+        // Oh, and let's set the uniforms and/or find them!
         gl.UseProgram(program_text);
         let loc = gl.GetUniformLocation(program_text,
                                         transmute(b"atlas\0"));
-        if loc != -1 {
+        if loc >= 0 {
             gl.Uniform1i(loc, 0); // texture unit 0
         }
+        gl.UseProgram(program_model);
+        loc_transform = gl.GetUniformLocation(program_model,
+                                              transmute(b"transform\0"));
+        loc_colors = gl.GetUniformLocation(program_model,
+                                           transmute(b"colors\0"));
+        loc_opacity = gl.GetUniformLocation(program_model,
+                                            transmute(b"opacity\0"));
+        // Set up initial values for the uniforms... which, COINCIDENTALLY, are
+        // also what we want for the multisample test
+        if loc_transform >= 0 {
+            gl.UniformMatrix3fv(loc_transform, 1, 0,
+                                (&[1.0, 0.0, 0.0,
+                                   0.0, 1.0, 0.0,
+                                   0.0, 0.0, 1.0]).as_ptr());
+        }
+        if loc_opacity >= 0 {
+            gl.Uniform1f(loc_opacity, 1.0);
+        }
+        if loc_colors >= 0 {
+            gl.Uniform4fv(loc_colors, 8,
+                          [
+                              1.0, 0.0, 1.0, 1.0,
+                              1.0, 0.0, 0.0, 1.0,
+                              0.0, 1.0, 0.0, 1.0,
+                              1.0, 1.0, 0.0, 1.0,
+                              0.0, 0.0, 1.0, 1.0,
+                              1.0, 0.0, 1.0, 1.0,
+                              0.0, 1.0, 1.0, 1.0,
+                              1.0, 1.0, 1.0, 1.0,
+                          ].as_ptr());
+        }
+        assertgl(&gl, "initializing the context")?;
         // Before we're done, check for Mesa bug #4613.
         // We have to do this check, and otherwise assume multisampling is in
         // use, in case somebody uses their vendor's special control panel to
         // force multisampling to be used.
         gl.ClearColor(0.0, 1.0, 0.0, 0.0);
         gl.Clear(GL_COLOR_BUFFER_BIT);
-        gl.BindVertexArray(buf.vaos[0]);
-        gl.UseProgram(program_model);
         gl.Disable(GL_MULTISAMPLE);
-        gl.BufferSubData(GL_ARRAY_BUFFER, 0,
-                         (size_of::<MergedModelVert>()*3) as GLsizeiptr,
-                         transmute(&MULTISAMPLE_COVERAGE_TEST_BATCH[0]));
+        let mut testvao = 0;
+        gl.GenVertexArrays(1, &mut testvao);
+        gl.BindVertexArray(testvao);
+        let mut testvb = 0;
+        gl.GenBuffers(1, &mut testvb);
+        assertgl(&gl, "fuck").unwrap();
+        gl.EnableVertexAttribArray(0);
+        gl.VertexAttribPointer(0, 2, GL_FLOAT, 0, 12,
+                               transmute(0usize));
+        gl.EnableVertexAttribArray(1);
+        gl.VertexAttribIPointer(1, 1, GL_UNSIGNED_INT, 12,
+                                transmute(8usize));
+        gl.BufferData(GL_ARRAY_BUFFER, 12 * 4,
+                      transmute(&MULTISAMPLE_COVERAGE_TEST_BATCH[0]),
+                      GL_STREAM_DRAW);
         gl.DrawArrays(GL_TRIANGLES, 0, 3);
         gl.Enable(GL_MULTISAMPLE);
         let mut testfb = 0;
@@ -390,12 +481,15 @@ where F: FnMut() -> WindowBuilder
         }
         gl.DeleteFramebuffers(1, &testfb);
         gl.DeleteTextures(1, &testtex);
-        bufs = vec![buf];
-    } assertgl(&gl, "initializing the context")?;
+        gl.DeleteBuffers(1, &testvb);
+        gl.DeleteVertexArrays(1, &testvao);
+        assertgl(&gl, "checking for the multisample bug")?;
+    }
     Ok(Box::new(OpenGL32 {
         window, ctx, gl, last_batch_type: LastBatchType::None,
         program_model, program_text, bound_texture: None,
-        force_multisample, bufs, cur_buf: 0, quadra,
+        force_multisample, quad_vao, quad_vb, model_cache: ModelCache::new(),
+        loc_transform, loc_colors, loc_opacity,
     }))
 }
 
@@ -515,44 +609,6 @@ impl Renderer for OpenGL32 {
         } assertgl(gl, "uploading a glyph image").unwrap();
         Ok(())
     }
-    fn open_model_batch(&mut self) -> ModelBatch {
-        ModelBatch::Merged(MergedModelBatch::new(self.map_next_buf()))
-    }
-    fn consume_model_batch(&mut self, batch: ModelBatch) {
-        let gl = &self.gl;
-        // might be nice for safety if we confirmed that this batch was the
-        // one we mapped. (shrug)
-        let mut batch = match batch {
-            ModelBatch::Merged(x) => x,
-            ModelBatch::Split(_) => panic!("We can't render split model \
-                                            batches, and we don't hand them \
-                                            out"),
-        };
-        // Unsafe justification: Trivial GL calls. We get all the sizes right,
-        // I promise.
-        unsafe {
-            gl.FlushMappedBufferRange(GL_ARRAY_BUFFER, 0,
-                                      (batch.n * size_of::<MergedModelVert>())
-                                      as GLsizeiptr);
-            gl.UnmapBuffer(GL_ARRAY_BUFFER);
-            if self.last_batch_type != LastBatchType::Model {
-                gl.BindVertexArray(self.bufs[self.cur_buf].vaos[0]);
-                gl.UseProgram(self.program_model);
-                if !self.force_multisample {
-                    gl.Enable(GL_MULTISAMPLE);
-                }
-                self.last_batch_type = LastBatchType::Model;
-                assertgl(gl, "switching to the model shader").unwrap();
-            }
-            gl.DrawArrays(GL_TRIANGLES, 0, batch.n as GLint);
-            match self.bufs[self.cur_buf].fence.take() {
-                None => (),
-                Some(x) => { gl.DeleteSync(x); }
-            }
-            self.bufs[self.cur_buf].fence = Some(gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
-            self.cur_buf = (self.cur_buf + 1) % self.bufs.len();
-        } assertgl(gl, "rendering a model batch").unwrap();
-    }
     fn new_text_batch(&mut self) -> TextBatch {
         TextBatch::Merged(MergedTextBatch::new())
     }
@@ -577,9 +633,10 @@ impl Renderer for OpenGL32 {
         // addendum: we assume that `atlas` is a valid texture ID, but if it
         // isn't, an OpenGL error will be raised.
         unsafe {
+            let gl = &self.gl;
             if self.last_batch_type != LastBatchType::Text {
-                let gl = &self.gl;
-                gl.BindVertexArray(self.bufs[self.cur_buf].vaos[1]);
+                gl.BindVertexArray(self.quad_vao);
+                gl.BindBuffer(GL_ARRAY_BUFFER, self.quad_vb);
                 gl.UseProgram(self.program_text);
                 if !self.force_multisample {
                     gl.Disable(GL_MULTISAMPLE);
@@ -587,61 +644,58 @@ impl Renderer for OpenGL32 {
                 self.last_batch_type = LastBatchType::Text;
                 assertgl(gl, "switching to the text shader").unwrap();
             }
-            for (&atlas, verts) in atlases.iter().zip(batch.verts.iter()) {
-                if verts.len() == 0 { continue }
-                self.gl.BindTexture(GL_TEXTURE_2D, atlas);
-                let next_buf = self.get_next_buf();
-                let vbo = self.bufs[next_buf].vbo;
-                self.gl.BindBuffer(GL_ARRAY_BUFFER, vbo);
-                let gl = &self.gl;
-                for seg in verts.chunks(QUADRA_COUNT*4) {
+            for (_, verts) in atlases.iter().zip(batch.verts.iter()) {
+                for seg in verts.chunks(QUAD_IB_COUNT*4) {
                     let chunksize
                         = (seg.len() * size_of::<MergedTextVert>())
                         as GLsizeiptr;
+                    gl.BufferData(GL_ARRAY_BUFFER, BUF_SIZE as GLsizeiptr,
+                                  null(), GL_STREAM_DRAW);
                     gl.BufferSubData(GL_ARRAY_BUFFER, 0,
                                      chunksize, transmute(seg.as_ptr()));
                     gl.DrawElements(GL_TRIANGLES,
                                     (seg.len() / 4 * 6) as GLint,
                                     GL_UNSIGNED_SHORT, null());
                 }
-                self.bufs[self.cur_buf].fence = Some(gl.FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0));
-                self.cur_buf = (self.cur_buf + 1) % self.bufs.len();
             }
         } assertgl(&self.gl, "rendering a text batch").unwrap();
     }
-}
-
-impl OpenGL32 {
-    fn get_next_buf(&mut self) -> usize {
-                let gl = &self.gl;
-        if let Some(fence) = self.bufs[self.cur_buf].fence {
-            // Unsafe justification: No pointers. Errors all defined to result
-            // in GL errors, not UB.
-            unsafe {
-                match gl.ClientWaitSync(fence, GL_SYNC_FLUSH_COMMANDS_BIT, 0) {
-                    GL_ALREADY_SIGNALED | GL_CONDITION_SATISFIED => {
-                        // so we never wait on the same fence twice
-                        self.bufs[self.cur_buf].fence = None;
-                    },
-                    GL_TIMEOUT_EXPIRED => {
-                        // fence isn't ready, what we do next depends on how
-                        // many bufs there are (TODO: that)
-                        trace!("All VBOs in use. Making a new one. ({})",
-                               self.bufs.len()+1);
-                        let buf = Buf::new(gl, self.quadra);
-                        debug_assert_eq!(buf.fence, None);
-                        self.bufs.insert(self.cur_buf, buf);
-                    },
-                    _ => {
-                        assertgl(gl, "waiting on a fence").unwrap();
-                    }
+    fn render_model(&mut self, model: &Model,
+                    transform: &Transform, color_overrides: &[Color],
+                    opacity: f32) {
+        let cached = self.model_cache.get_or_make_cached(&self.gl, model);
+        let gl = &self.gl;
+        unsafe {
+            if self.last_batch_type != LastBatchType::Model {
+                gl.UseProgram(self.program_model);
+                if !self.force_multisample {
+                    gl.Enable(GL_MULTISAMPLE);
+                }
+                self.last_batch_type = LastBatchType::Model;
+                assertgl(gl, "switching to the model shader").unwrap();
+            }
+            gl.BindVertexArray(cached.vao);
+            if self.loc_transform >= 0 {
+                gl.UniformMatrix3fv(self.loc_transform, 1, 0,
+                                    transform.into_inner().as_slice()
+                                    .as_ptr());
+            }
+            if self.loc_opacity >= 0 {
+                gl.Uniform1f(self.loc_opacity, opacity);
+            }
+            if self.loc_colors >= 0 {
+                for n in 0 .. model.colors.len() {
+                    let color = color_overrides.get(n)
+                        .unwrap_or(&model.colors[n]);
+                    gl.Uniform4f(self.loc_colors + (n as GLint),
+                                 color.r.to_f32(), color.g.to_f32(),
+                                 color.b.to_f32(), color.a.to_f32());
                 }
             }
+            gl.DrawElements(GL_TRIANGLES, cached.num_elements,
+                            GL_UNSIGNED_SHORT, null());
         }
-        self.cur_buf
-    }
-    fn map_next_buf(&mut self) -> &mut [u8] {
-        let next_buf = self.get_next_buf();
-        map_buffer(&self.gl, self.bufs[next_buf].vbo)
     }
 }
+
+

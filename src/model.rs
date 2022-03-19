@@ -4,7 +4,10 @@ use std::{
     fmt::{Display, Debug, Formatter, Result as FmtResult},
     num::{ParseFloatError, ParseIntError},
     str::FromStr,
+    sync::atomic::{AtomicU32, Ordering},
 };
+
+static NEXT_UNIQUE_ID: AtomicU32 = AtomicU32::new(0);
 
 /// Used internally to implement the `bb` command
 struct BoundingBox {
@@ -12,10 +15,17 @@ struct BoundingBox {
     out_x: f32, out_y: f32, out_w: f32, out_h: f32,
 }
 
+#[derive(PartialEq)]
+pub(crate) struct ModelPoint {
+    pub(crate) point: Point,
+    pub(crate) color_idx: u8,
+}
+
 pub struct Model {
-    points: Vec<Point>,
-    triangles: Vec<(u16,u16,u16,u8)>,
-    colors: Vec<Color>,
+    pub(crate) points: Vec<ModelPoint>,
+    pub(crate) triangles: Vec<(u16,u16,u16)>,
+    pub(crate) colors: Vec<Color>,
+    pub(crate) unique_id: u32,
 }
 
 impl Debug for Model {
@@ -136,7 +146,7 @@ fn parse_bounding_box(args: &[&str]) -> Result<BoundingBox, SomeKindaError> {
 /// Checks to see if a given point is already in the list, and reuses it if so.
 /// Otherwise, inserts it into the list. Returns the index in the list at which
 /// the point can now be found.
-fn find_or_insert_point(point: Point, points: &mut Vec<Point>) -> usize {
+fn find_or_insert_point(point: ModelPoint, points: &mut Vec<ModelPoint>) -> usize {
     for n in (0 .. points.len()).rev() {
         if points[n] == point { return n }
     }
@@ -231,8 +241,12 @@ impl Model {
                             * bounding_box.out_w + bounding_box.out_x;
                         let y = (y - bounding_box.in_y) / bounding_box.in_h
                             * bounding_box.out_h + bounding_box.out_y;
+                        let model_point = ModelPoint {
+                            point: Point::new(x, y),
+                            color_idx: colorid,
+                        };
                         let index: u16 = match
-                            find_or_insert_point(Point::new(x, y), &mut points)
+                            find_or_insert_point(model_point, &mut points)
                             .try_into() {
                                 Ok(x) => x,
                                 Err(_) => {
@@ -252,7 +266,7 @@ impl Model {
                     triangles.reserve(this_polygon.len()/2*3);
                     for i in 1 .. this_polygon.len()-1 {
                         triangles.push((this_polygon[0], this_polygon[i],
-                                        this_polygon[i+1], colorid));
+                                        this_polygon[i+1]));
                     }
                 },
                 _ => return Err(V2DParseError {
@@ -261,38 +275,8 @@ impl Model {
                 })
             }
         }
-        Ok(Model { points, triangles, colors })
-    }
-    pub(crate)
-    fn render<'a, B>(&self, transform: &Transform,
-                     color_overrides: &[Color],
-                     opacity: f32, mut batch: B,
-                     renderer: &'a mut Box<dyn Renderer>) -> ModelBatch
-    where B: ModelBatchable + From<ModelBatch> + Into<ModelBatch>
-    {
-        // transform each point
-        let points: Vec<Point>
-            = self.points.iter().map(|x| transform.transform_point(x))
-            .collect();
-        // batch each triangle
-        //batch.reserve(self.triangles.len());
-        for triangle in self.triangles.iter() {
-            let color = color_overrides.get(triangle.3 as usize)
-                .or_else(|| self.colors.get(triangle.3 as usize))
-                .unwrap();
-            let color = if opacity == 1.0 { *color } else { color * opacity };
-            let a = &points[triangle.0 as usize];
-            let b = &points[triangle.1 as usize];
-            let c = &points[triangle.2 as usize];
-            if batch.push(a.x, a.y, b.x, b.y, c.x, c.y, color).is_err() {
-                renderer.consume_model_batch(batch.into());
-                batch = renderer.open_model_batch().into();
-                batch.push(a.x, a.y, b.x, b.y, c.x, c.y, color)
-                    .expect("Couldn't push a single vertex into a fresh \
-                             batch!");
-            }
-        }
-        batch.into()
+        Ok(Model { points, triangles, colors,
+                   unique_id: NEXT_UNIQUE_ID.fetch_add(1, Ordering::Relaxed)})
     }
 }
 

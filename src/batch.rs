@@ -1,29 +1,5 @@
 use crate::*;
 
-use std::{
-    slice,
-    mem::{size_of, transmute},
-};
-
-#[repr(C)]
-#[derive(Debug)]
-pub(crate) struct MergedModelVert {
-    pub x: f32, pub y: f32,
-    pub r: f16, pub g: f16, pub b: f16, pub a: f16,
-}
-
-#[repr(C)]
-#[derive(Debug)]
-pub(crate) struct SplitModelVert {
-    pub x: f32, pub y: f32,
-}
-
-#[repr(C)]
-#[derive(Debug)]
-pub(crate) struct SplitModelPrim {
-    pub r: f16, pub g: f16, pub b: f16, pub a: f16,
-}
-
 #[repr(C)]
 #[derive(Debug)]
 pub(crate) struct MergedTextVert {
@@ -49,60 +25,6 @@ pub(crate) struct SplitTextPrim {
     pub stroke_r: f16, pub stroke_g: f16, pub stroke_b: f16, pub stroke_a: f16,
 }
 
-pub(crate) struct MergedModelBatch {
-    pub verts: &'static mut[MergedModelVert],
-    /// the number of VERTICES batched
-    pub n: usize,
-}
-
-impl MergedModelBatch {
-    pub fn new(buf: &mut[u8]) -> MergedModelBatch {
-        let num_prims_that_fit = buf.len() / (size_of::<MergedModelVert>()*3);
-        assert!(num_prims_that_fit > 0);
-        let num_verts_that_fit = num_prims_that_fit * 3;
-        // unsafe justification: We're carefully borrowing a subset of this
-        // byte array as another type, to later send to the video card. We
-        // are honest about the lifetime, so another mutable borrow of buf
-        // should be impossible.
-        unsafe {
-            MergedModelBatch {
-                verts: slice::from_raw_parts_mut(transmute(&mut buf[0]),
-                                                 num_verts_that_fit),
-                n: 0,
-            }
-        }
-    }
-}
-
-pub(crate) struct SplitModelBatch {
-    pub verts: &'static mut[SplitModelVert],
-    pub prims: &'static mut[SplitModelPrim],
-    /// the number of PRIMITIVES batched
-    pub n: usize,
-}
-
-impl SplitModelBatch {
-    pub fn new(buf: &mut[u8]) -> SplitModelBatch {
-        let num_prims_that_fit = buf.len()
-            / (size_of::<SplitModelVert>() * 3 + size_of::<SplitModelPrim>());
-        assert!(num_prims_that_fit > 0);
-        let num_verts_that_fit = num_prims_that_fit * 3;
-        let offset = num_verts_that_fit * 3 * size_of::<SplitModelVert>();
-        // unsafe justification: See MergedModelBatch::new(). Additionally,
-        // while we *are* mutably borrowing from the same slice twice, we're
-        // doing so in a non-overlapping fashion, which should make it okay.
-        unsafe {
-            SplitModelBatch {
-                verts: slice::from_raw_parts_mut(transmute(&mut buf[0]),
-                                                 num_verts_that_fit),
-                prims: slice::from_raw_parts_mut(transmute(&mut buf[offset]),
-                                                 num_prims_that_fit),
-                n: 0,
-            }
-        }
-    }
-}
-
 pub(crate) struct MergedTextBatch {
     pub verts: Vec<Vec<MergedTextVert>>,
 }
@@ -124,73 +46,10 @@ impl SplitTextBatch {
     }
 }
 
-pub(crate) trait ModelBatchable {
-    fn push(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32,
-            color: Color) -> Result<(),()>;
-    fn clear(&mut self);
-}
-
 pub(crate) trait TextBatchable {
     fn push(&mut self, atlas: u32, x: f32, y: f32, u: f16, v: f16,
            fill: Color, stroke: Color);
     fn clear(&mut self);
-}
-
-impl ModelBatchable for MergedModelBatch {
-    fn push(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32,
-            color: Color) -> Result<(),()> {
-        if self.n == self.verts.len() {
-            Err(())
-        }
-        else {
-            self.verts[self.n] = MergedModelVert {
-                x: x1, y: y1,
-                r: color.r, g: color.g, b: color.b, a: color.a,
-            };
-            self.verts[self.n+1] = MergedModelVert {
-                x: x2, y: y2,
-                r: color.r, g: color.g, b: color.b, a: color.a,
-            };
-            self.verts[self.n+2] = MergedModelVert {
-                x: x3, y: y3,
-                r: color.r, g: color.g, b: color.b, a: color.a,
-            };
-            self.n += 3;
-            Ok(())
-        }
-    }
-    fn clear(&mut self) {
-        self.n = 0;
-    }
-}
-
-impl ModelBatchable for SplitModelBatch {
-    fn push(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x3: f32, y3: f32,
-            color: Color) -> Result<(),()> {
-        if self.n == self.verts.len() {
-            Err(())
-        }
-        else {
-            let m = self.n * 3;
-            self.verts[m] = SplitModelVert {
-                x: x1, y: y1,
-            };
-            self.verts[m+1] = SplitModelVert {
-                x: x2, y: y2,
-            };
-            self.verts[m+2] = SplitModelVert {
-                x: x3, y: y3,
-            };
-            self.prims[self.n] = SplitModelPrim {
-                r: color.r, g: color.g, b: color.b, a: color.a,
-            };
-            self.n += 1;
-            todo!()
-        }
-    }
-    fn clear(&mut self) {
-        self.n = 0;
-    }
 }
 
 impl TextBatchable for MergedTextBatch {
@@ -233,41 +92,6 @@ impl TextBatchable for SplitTextBatch {
     fn clear(&mut self) {
         self.verts.clear();
         self.prims.clear();
-    }
-}
-
-pub(crate) enum ModelBatch {
-    Merged(MergedModelBatch),
-    Split(SplitModelBatch),
-}
-
-impl From<ModelBatch> for MergedModelBatch {
-    fn from(other: ModelBatch) -> MergedModelBatch {
-        match other {
-            ModelBatch::Merged(x) => x,
-            _ => panic!("Got our merges and splits mixed up! Renderer bug!"),
-        }
-    }
-}
-
-impl From<MergedModelBatch> for ModelBatch {
-    fn from(other: MergedModelBatch) -> ModelBatch {
-        ModelBatch::Merged(other)
-    }
-}
-
-impl From<ModelBatch> for SplitModelBatch {
-    fn from(other: ModelBatch) -> SplitModelBatch {
-        match other {
-            ModelBatch::Split(x) => x,
-            _ => panic!("Got our merges and splits mixed up! Renderer bug!"),
-        }
-    }
-}
-
-impl From<SplitModelBatch> for ModelBatch {
-    fn from(other: SplitModelBatch) -> ModelBatch {
-        ModelBatch::Split(other)
     }
 }
 

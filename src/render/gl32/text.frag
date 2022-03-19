@@ -2,8 +2,8 @@
 
 out lowp vec4 result;
 
-flat in lowp vec4 frag_color;
-flat in lowp vec4 frag_color2;
+flat in lowp vec4 frag_fillcolor;
+flat in lowp vec4 frag_strokecolor;
 in mediump vec2 uv;
 uniform sampler2D atlas;
 
@@ -33,5 +33,5 @@ void main() {
        + take_sample(uv.xy - delta_u + delta_v)
        + take_sample(uv.xy + delta_u + delta_v)) * 0.25;
   float buzz = sample_d(uv) * 2.0;
-  result = mix(frag_color2 * buzz, frag_color, alpha);
+  result = mix(frag_strokecolor * buzz, frag_fillcolor, alpha);
 }

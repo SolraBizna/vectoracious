@@ -12,11 +12,10 @@ pub(crate) trait Renderer {
     fn begin_rendering(&mut self) -> anyhow::Result<()>;
     /// Called while rendering.
     fn clear(&mut self, r: f32, g: f32, b: f32, a: f32);
-    /// Called while rendering. Will be followed by a matching
-    /// `render_model_batch`. Only one batch will be open at a time.
-    fn open_model_batch(&mut self) -> ModelBatch;
-    /// Called while rendering, after calling `open_model_batch`.
-    fn consume_model_batch(&mut self, batch: ModelBatch);
+    /// Called while rendering.
+    fn render_model(&mut self, model: &Model,
+                    transform: &Transform, color_overrides: &[Color],
+                    opacity: f32);
     // These next two functions will be replaced!
     /// Called while rendering.
     fn new_text_batch(&mut self) -> TextBatch;
