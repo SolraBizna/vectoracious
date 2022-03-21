@@ -71,24 +71,7 @@ impl ModelCache {
                                   GL_STATIC_DRAW);
                     // Model: X___Y___C___
                     gl.BindVertexArray(vao);
-                    let loc = gl.GetAttribLocation(program_model,
-                                                   transmute(b"pos\0"));
-                    if loc < 0 {
-                        assertgl(&gl, "looking for model shader attribute \
-                                       \"pos\"").unwrap();
-                    }
-                    gl.EnableVertexAttribArray(loc as GLuint);
-                    gl.VertexAttribPointer(loc as GLuint, 2, GL_FLOAT, 0, 12,
-                                           transmute(0usize));
-                    let loc = gl.GetAttribLocation(program_model,
-                                                  transmute(b"color_index\0"));
-                    if loc < 0 {
-                        assertgl(&gl, "looking for model shader attribute \
-                                       \"color_index\"").unwrap();
-                    }
-                    gl.EnableVertexAttribArray(loc as GLuint);
-                    gl.VertexAttribIPointer(loc as GLuint, 1, GL_UNSIGNED_INT,
-                                            12, transmute(8usize));
+                    setup_model_attribs(&gl, program_model);
                     gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, ib);
                     let mut indices: Vec<u16>
                         = Vec::with_capacity(model.triangles.len()*3);
@@ -234,6 +217,40 @@ fn link_program(gl: &Procs, wat: &str, shaders: &[GLuint])
     }
 }
 
+fn setup_attribs(gl: &Procs, program: GLuint, program_name: &str,
+                 attribs: &[(&[u8], fn(&Procs, GLuint) -> GLvoid)]) {
+    for &(name, f) in attribs.iter() {
+        debug_assert!(name.ends_with(&[0]));
+        unsafe {
+            let loc = gl.GetAttribLocation(program, transmute(name.as_ptr()));
+            if loc < 0 {
+                warn!("couldn't find expected shader attribute {:?} \
+                       in the {:?} program",
+                      String::from_utf8_lossy(&name[..name.len()-1]),
+                      program_name);
+            }
+            else {
+                let loc = loc as GLuint;
+                gl.EnableVertexAttribArray(loc);
+                f(gl, loc);
+            }
+        }
+    }
+}
+
+fn setup_model_attribs(gl: &Procs, program: GLuint) {
+    setup_attribs(&gl, program, "model", &[
+        (b"pos\0", |gl, loc| unsafe {
+         gl.VertexAttribPointer(loc, 2, GL_FLOAT, 0, 12,
+                                transmute(0usize))
+        }),
+        (b"color_index\0", |gl, loc| unsafe {
+         gl.VertexAttribIPointer(loc, 1, GL_UNSIGNED_INT, 12,
+                                 transmute(8usize))
+        }),
+    ]);
+}
+
 fn map_buffer(gl: &Procs, vbo: GLuint) -> &mut [u8] {
     // Unsafe justification: holy cow mmap. also, our caller is responsible for
     // fencing this access into safety, not us!
@@ -367,38 +384,20 @@ where F: FnMut() -> WindowBuilder
         gl.BufferData(GL_ARRAY_BUFFER, BUF_SIZE as GLsizeiptr, null(),
                       GL_DYNAMIC_DRAW);
         // Text: X_Y_U_V_R_G_B_A_R_G_B_A_
-        let loc = gl.GetAttribLocation(program_text, transmute(b"pos\0"));
-        if loc < 0 {
-            assertgl(&gl, "looking for text shader attribute \"pos\"")?;
-        }
-        gl.EnableVertexAttribArray(loc as GLuint);
-        gl.VertexAttribPointer(loc as GLuint, 2, GL_HALF_FLOAT, 0, 24,
-                               transmute(0usize));
-        let loc = gl.GetAttribLocation(program_text, transmute(b"uv_in\0"));
-        if loc < 0 {
-            assertgl(&gl, "looking for text shader attribute \"uv_in\"")?;
-        }
-        gl.EnableVertexAttribArray(loc as GLuint);
-        gl.VertexAttribPointer(loc as GLuint, 2, GL_HALF_FLOAT, 0, 24,
-                               transmute(4usize));
-        let loc = gl.GetAttribLocation(program_text,
-                                       transmute(b"vert_fillcolor\0"));
-        if loc < 0 {
-            assertgl(&gl, "looking for text shader attribute \
-                           \"vert_fillcolor\"")?;
-        }
-        gl.EnableVertexAttribArray(loc as GLuint);
-        gl.VertexAttribPointer(loc as GLuint, 4, GL_HALF_FLOAT, 0, 24,
-                               transmute(8usize));
-        let loc = gl.GetAttribLocation(program_text,
-                                       transmute(b"vert_strokecolor\0"));
-        if loc < 0 {
-            assertgl(&gl, "looking for text shader attribute \
-                           \"vert_strokecolor\"")?;
-        }
-        gl.EnableVertexAttribArray(loc as GLuint);
-        gl.VertexAttribPointer(loc as GLuint, 4, GL_HALF_FLOAT, 0, 24,
-                               transmute(16usize));
+        setup_attribs(&gl, program_text, "text", &[
+            (b"pos\0", |gl, loc|
+             gl.VertexAttribPointer(loc, 2, GL_HALF_FLOAT, 0, 24,
+                                    transmute(0usize))),
+            (b"uv_in\0", |gl, loc|
+             gl.VertexAttribPointer(loc, 2, GL_HALF_FLOAT, 0, 24,
+                                    transmute(4usize))),
+            (b"vert_fillcolor\0", |gl, loc|
+             gl.VertexAttribPointer(loc, 4, GL_HALF_FLOAT, 0, 24,
+                                    transmute(8usize))),
+            (b"vert_strokecolor\0", |gl, loc|
+             gl.VertexAttribPointer(loc, 4, GL_HALF_FLOAT, 0, 24,
+                                    transmute(16usize))),
+        ]);
         // Do linear-to-sRGB compression before writing to the framebuffer and
         // decompression after reading (for blending)
         gl.Enable(GL_FRAMEBUFFER_SRGB);
@@ -457,22 +456,7 @@ where F: FnMut() -> WindowBuilder
         gl.BindVertexArray(testvao);
         let mut testvb = 0;
         gl.GenBuffers(1, &mut testvb);
-        let loc = gl.GetAttribLocation(program_model, transmute(b"pos\0"));
-        if loc < 0 {
-            assertgl(&gl, "looking for model shader attribute \"pos\"")?;
-        }
-        gl.EnableVertexAttribArray(loc as GLuint);
-        gl.VertexAttribPointer(loc as GLuint, 2, GL_FLOAT, 0, 12,
-                               transmute(0usize));
-        let loc = gl.GetAttribLocation(program_model,
-                                       transmute(b"color_index\0"));
-        if loc < 0 {
-            assertgl(&gl, "looking for model shader attribute \
-                           \"color_index\"")?;
-        }
-        gl.EnableVertexAttribArray(loc as GLuint);
-        gl.VertexAttribIPointer(loc as GLuint, 1, GL_UNSIGNED_INT, 12,
-                                transmute(8usize));
+        setup_model_attribs(&gl, program_model);
         gl.BufferData(GL_ARRAY_BUFFER, 12 * 4,
                       transmute(&MULTISAMPLE_COVERAGE_TEST_BATCH[0]),
                       GL_STREAM_DRAW);
