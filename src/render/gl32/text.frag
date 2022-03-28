@@ -1,4 +1,4 @@
-/* -*- c -*- */
+/* -*- glsl -*- */
 
 out lowp vec4 result;
 

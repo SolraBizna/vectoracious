@@ -1,4 +1,4 @@
-/* -*- c -*- */
+/* -*- glsl -*- */
 
 in mediump vec2 uv;
 
