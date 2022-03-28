@@ -1985,9 +1985,10 @@ impl Procs {
             procs,
             has_ARB_debug_output: false,
         };
-        let extensions = unsafe {CStr::from_ptr(transmute(ret.GetString(GL_EXTENSIONS)))};
-        let extensions = extensions.to_bytes();
-        for ext in extensions.split(|x| *x == b' ') {
+        let mut num_extensions = 0;
+        unsafe { ret.GetIntegerv(GL_NUM_EXTENSIONS, &mut num_extensions) };
+        for i in 0 .. num_extensions as GLuint {
+            let ext = unsafe {CStr::from_ptr(transmute(ret.GetStringi(GL_EXTENSIONS, i)))}.to_bytes();
             match ext {
                 b"GL_ARB_debug_output" => ret.has_ARB_debug_output = true,
             _ => (),
