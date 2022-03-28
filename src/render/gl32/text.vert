@@ -1,4 +1,4 @@
-#version 140 /* -*- c -*- */
+/* -*- c -*- */
 
 in mediump vec2 pos;
 in mediump vec2 uv_in;

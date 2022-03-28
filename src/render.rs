@@ -9,7 +9,9 @@ mod glerr;
 
 pub(crate) trait Renderer {
     /// Called to enter the rendering state.
-    fn begin_rendering(&mut self) -> anyhow::Result<()>;
+    fn begin_rendering(&mut self, params: &RenderParams) -> anyhow::Result<()>;
+    /// Called exactly once after `begin_rendering` and before `present`.
+    fn finish_world(&mut self, params: &RenderParams);
     /// Called while rendering.
     fn clear(&mut self, r: f32, g: f32, b: f32, a: f32);
     /// Called while rendering.

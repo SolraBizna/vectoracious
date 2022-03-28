@@ -1,4 +1,4 @@
-#version 140 /* -*- c -*- */
+/* -*- c -*- */
 
 #define MAX_COLORS 16 // sync this with the Rust side!
 

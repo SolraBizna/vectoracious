@@ -41,6 +41,8 @@ pub(crate) struct SplitTextBatch {
 }
 
 impl SplitTextBatch {
+    // TODO: decide whether to even keep the split/merge split
+    #[allow(dead_code)]
     pub fn new() -> SplitTextBatch {
         SplitTextBatch { verts: Vec::new(), prims: Vec::new() }
     }
