@@ -1,4 +1,4 @@
-/* -*- c -*- */
+/* -*- glsl -*- */
 
 flat in lowp vec4 frag_color;
 

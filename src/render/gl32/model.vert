@@ -1,4 +1,4 @@
-/* -*- c -*- */
+/* -*- glsl -*- */
 
 #define MAX_COLORS 16 // sync this with the Rust side!
 
