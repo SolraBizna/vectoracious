@@ -438,8 +438,12 @@ where F: FnMut() -> WindowBuilder
                              context: {}", x))?;
         },
     };
+    let (w, h) = window.size();
+    debug!("Window dimensions: {}x{}", w, h);
     let ctx = window.gl_create_context()
         .map_err(|x|anyhow!("Unable to create OpenGL 3.0 context: {}",x))?;
+    window.gl_make_current(&ctx)
+        .map_err(|x| anyhow!("OpenGL context lost! {}", x))?;
     let gl = Procs::new(|proc| {
         // Our SDL2 binding provides a `gl_get_proc_address` binding, but it
         // only takes &str and adds a null terminator to it before calling.
@@ -937,7 +941,9 @@ impl Renderer for OpenGL32 {
                 }
             }
         }
-        unsafe { gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_fb) };
+        unsafe {
+	    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_fb);
+	};
         #[cfg(debug_assertions)]
         assertgl(&self.gl, "starting rendering (this means the error probably \
                             occurred while rendering the last frame, but \
@@ -1007,7 +1013,7 @@ impl Renderer for OpenGL32 {
         self.window.gl_swap_window();
     }
     fn get_size(&self) -> (u32, u32) {
-        self.window.size()
+        self.window.drawable_size()
     }
     fn enable_blend(&mut self) {
         let gl = &self.gl;
@@ -1095,7 +1101,7 @@ impl Renderer for OpenGL32 {
             self.bound_texture = Some(atlas);
         }
         // Unsafe justification: The only pointer we're passing is to a slice
-        // whose bounds are predictable. If `GL_UNPACK_ALIGNMENT` gets set to a
+        // whose bounds are predictable. If `GL_UNPACK_ALIGNMENT`  to a
         // value other than 1, this will be unsound!
         debug_assert!(pixels.len() >= glyph_w as usize * glyph_h as usize * 3);
         unsafe {
