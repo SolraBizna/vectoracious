@@ -942,8 +942,8 @@ impl Renderer for OpenGL32 {
             }
         }
         unsafe {
-	    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_fb);
-	};
+            gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_fb);
+        };
         #[cfg(debug_assertions)]
         assertgl(&self.gl, "starting rendering (this means the error probably \
                             occurred while rendering the last frame, but \
