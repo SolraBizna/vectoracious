@@ -1101,7 +1101,7 @@ impl Renderer for OpenGL32 {
             self.bound_texture = Some(atlas);
         }
         // Unsafe justification: The only pointer we're passing is to a slice
-        // whose bounds are predictable. If `GL_UNPACK_ALIGNMENT`  to a
+        // whose bounds are predictable. If `GL_UNPACK_ALIGNMENT` gets set to a
         // value other than 1, this will be unsound!
         debug_assert!(pixels.len() >= glyph_w as usize * glyph_h as usize * 3);
         unsafe {
