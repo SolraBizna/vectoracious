@@ -1,0 +1,4 @@
+#+TITLE: Vectoracious TODO List
+* TODO Add a uniform to clamp the bloom to
+* TODO Framerate counter
+* TODO Actually make bloom work
