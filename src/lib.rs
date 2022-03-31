@@ -94,8 +94,8 @@ impl Default for RenderParams {
                 0.0, 0.0, 4.0,
                 -3.0, -3.0, -3.0,
             ],
-            bloom_radius: Vector::new(16.0, 16.0),
-            bloom_iterations: [2, 2],
+            bloom_radius: Vector::new(8.0, 8.0),
+            bloom_iterations: [4, 4],
             world_mat: [
                 1.0, 0.0, 0.0,
                 0.0, 1.0, 0.0,

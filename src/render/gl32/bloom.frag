@@ -12,7 +12,7 @@ out mediump vec4 result;
 void main() {
   ivec2 center = ivec2(uv);
   highp vec3 accum = texelFetch(src, center, 0).rgb * texelFetch(gauss, 0, 0).r;
-  for(int i = 1; i < 49; i += 1) {//num_samples; i += 1) {
+  for(int i = 1; i < num_samples; i += 1) {
 #if defined(BLOOM_HORIZ)
     ivec2 off = ivec2(i, 0);
 #elif defined(BLOOM_VERT)
