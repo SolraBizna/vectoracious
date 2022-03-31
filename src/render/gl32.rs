@@ -1064,7 +1064,7 @@ impl Renderer for OpenGL32 {
             }
             // okay, now repeatedly try the proxy texture thing
             while max_size >= 256 {
-                gl.TexImage2D(GL_PROXY_TEXTURE_2D, 0, GL_RGB as GLint,
+                gl.TexImage2D(GL_PROXY_TEXTURE_2D, 0, GL_RGB8 as GLint,
                               max_size, max_size, 0, GL_RGB, GL_UNSIGNED_BYTE,
                               null());
                 let mut got_width = 0;
