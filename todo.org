@@ -4,3 +4,4 @@
 * DONE Actually make bloom work
 * TODO call glViewport
 * TODO handle resizing, like, at all
+* TODO extension blacklist

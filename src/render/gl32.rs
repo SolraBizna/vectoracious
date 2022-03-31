@@ -888,9 +888,10 @@ impl Renderer for OpenGL32 {
                         }
                         unsafe {
                             gl.BindTexture(GL_TEXTURE_1D,self.gauss_tex[axis]);
-                            gl.TexImage1D(GL_TEXTURE_1D, 0, GL_R32F as GLint,
+                            gl.TexImage1D(GL_TEXTURE_1D, 0,
+                                          GL_R32F as GLint,
                                           samples as GLint,
-                                          0, GL_LUMINANCE, GL_FLOAT,
+                                          0, GL_RED, GL_FLOAT,
                                           transmute(&buf[0]));
                             gl.TexParameteri(GL_TEXTURE_1D,
                                              GL_TEXTURE_MIN_FILTER,

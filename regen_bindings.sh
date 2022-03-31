@@ -12,5 +12,5 @@ if [ $# -ne 1 ]; then
     exit 1
 fi
 
-#rglgen "$1" -t gl2.1 GL_ARB_color_buffer_float GL_ARB_half_float_pixel > src/render/gl21/binding.rs
+#rglgen "$1" -t gl2.1 GL_ARB_color_buffer_float GL_ARB_texture_float GL_ARB_half_float_pixel > src/render/gl21/binding.rs
 rglgen "$1" -t gl3.2 GL_ARB_debug_output > src/render/gl32/binding.rs
