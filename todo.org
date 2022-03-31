@@ -5,3 +5,5 @@
 * TODO call glViewport
 * TODO handle resizing, like, at all
 * TODO extension blacklist
+* TODO bloom undersampling
+* TODO world oversampling
