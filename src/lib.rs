@@ -68,7 +68,7 @@ pub struct RenderParams {
     /// we sample out to 3 standard deviations, that number might be 3 times
     /// higher than you expect)
     pub bloom_radius: Vector,
-    /// The number of times to iterate the Gaussian blur. Default is 8.
+    /// The number of times to iterate the Gaussian blur. Default is 2.
     ///
     /// Weird DSP note: Applying an N-radius Gaussian blur M times is exactly
     /// the same as applying an N*M-radius Gaussian blur, but potentially a lot
@@ -95,7 +95,7 @@ impl Default for RenderParams {
                 -3.0, -3.0, -3.0,
             ],
             bloom_radius: Vector::new(16.0, 16.0),
-            bloom_iterations: [1, 1],
+            bloom_iterations: [2, 2],
             world_mat: [
                 1.0, 0.0, 0.0,
                 0.0, 1.0, 0.0,

@@ -3,6 +3,7 @@ use super::*;
 use core::slice;
 use std::{
     collections::HashMap,
+    f32::consts::{E,PI},
     fmt::Write,
     io::Write as _, // we just want its trait methods
     mem::{size_of, transmute},
@@ -118,6 +119,7 @@ struct OpenGL32 {
     loc_transform: GLint,
     loc_opacity: GLint,
     loc_colors: GLint,
+    loc_bwm_mat: GLint,
     max_multisample_power: u32,
     is_blending: bool,
     /// Width of world framebuffer
@@ -473,7 +475,7 @@ where F: FnMut() -> WindowBuilder
          quad_vb, loc_transform, loc_opacity, loc_colors, program_blit,
          max_multisample_power, program_bwm, ui_tex, bloom_tex, world_tex,
          ui_fb, bloom_fb, world_fb, program_bloomx, program_bloomy,
-         gauss_tex, bloom_vao, bloom_vb);
+         gauss_tex, bloom_vao, bloom_vb, loc_bwm_mat);
     unsafe {
         // If we have the appropriate extension, let's make the debug messages
         // FLY!
@@ -639,6 +641,8 @@ where F: FnMut() -> WindowBuilder
                                            transmute(b"colors\0"));
         loc_opacity = gl.GetUniformLocation(program_model,
                                             transmute(b"opacity\0"));
+        loc_bwm_mat = gl.GetUniformLocation(program_bwm,
+                                            transmute(b"mat\0"));
         // Set up initial values for the uniforms... which, COINCIDENTALLY, are
         // also what we want for the multisample test
         if loc_transform >= 0 {
@@ -740,7 +744,7 @@ where F: FnMut() -> WindowBuilder
         assertgl(&gl, "checking for the multisample bug")?;
     }
     Ok(Box::new(OpenGL32 {
-        window, ctx, gl, last_batch_type: LastBatchType::None,
+        window, ctx, gl, last_batch_type: LastBatchType::None, loc_bwm_mat,
         program_model, program_text, program_bwm, bound_texture: None,
         force_multisample, quad_vao, quad_vb, model_cache: ModelCache::new(),
         loc_transform, loc_colors, loc_opacity, max_multisample_power,
@@ -810,6 +814,13 @@ impl Renderer for OpenGL32 {
                 self.bloom_w = bloom_w;
                 self.bloom_h = bloom_h;
                 unsafe {
+                    for &prog in &[self.program_bloomx, self.program_bloomy] {
+                        setup_uniforms(&gl, prog, "bloom", &[
+                            (b"max_uv\0", &|gl, loc|
+                             gl.Uniform2i(loc, bloom_w as GLint,
+                                          bloom_h as GLint)),
+                        ]);
+                    }
                     self.bound_texture = None;
                     for pong in 0..2 {
                         gl.BindTexture(GL_TEXTURE_2D, self.bloom_tex[pong]);
@@ -864,15 +875,17 @@ impl Renderer for OpenGL32 {
                         debug!("creating gauss texture for {} radius \
                                 ({} samples)", radius, samples);
                         let mut buf: Vec<f32> = Vec::with_capacity(samples);
+                        let left = 1.0 / 2.0 * PI * radius * radius;
+                        
                         for i in 0 .. samples {
-                            let th = (i as f32) / radius;
-                            buf.push(1.0);
+                            let x = i as f32;
+                            let right = -(x * x / (2.0 * radius * radius));
+                            buf.push(E.powf(right) * left);
                         }
                         let total = buf.iter().fold(0.0, |a, &x| a+x);
                         for el in buf.iter_mut() {
                             *el /= total;
                         }
-                        eprintln!("{:?}", buf);
                         unsafe {
                             gl.BindTexture(GL_TEXTURE_1D,self.gauss_tex[axis]);
                             gl.TexImage1D(GL_TEXTURE_1D, 0, GL_R32F as GLint,
@@ -1285,6 +1298,24 @@ impl OpenGL32 {
             let mut src_tex = world_src_tex;
             let mut dst_fb = self.bloom_fb[0];
             gl.BindVertexArray(self.bloom_vao);
+            // apply the bloom matrix, first of all.
+            gl.UseProgram(self.program_bwm);
+            if self.loc_bwm_mat >= 0 {
+                gl.UniformMatrix4x3fv(self.loc_bwm_mat, 1, 0,
+                                      &params.bloom_premat[0]);
+            }
+            gl.BindTexture(GL_TEXTURE_2D, src_tex);
+            gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, dst_fb);
+            gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
+            if dst_fb == self.bloom_fb[0] {
+                src_tex = self.bloom_tex[0];
+                dst_fb = self.bloom_fb[1];
+            }
+            else {
+                src_tex = self.bloom_tex[1];
+                dst_fb = self.bloom_fb[0];
+            }
+            // now do the X iterations
             gl.ActiveTexture(GL_TEXTURE1);
             gl.BindTexture(GL_TEXTURE_1D, self.gauss_tex[0]);
             gl.ActiveTexture(GL_TEXTURE0);
@@ -1298,10 +1329,11 @@ impl OpenGL32 {
                     dst_fb = self.bloom_fb[1];
                 }
                 else {
-                    src_tex = self.bloom_tex[0];
-                    dst_fb = self.bloom_fb[1];
+                    src_tex = self.bloom_tex[1];
+                    dst_fb = self.bloom_fb[0];
                 }
             }
+            // now do the Y iterations
             if !radii_same {
                 gl.ActiveTexture(GL_TEXTURE1);
                 gl.BindTexture(GL_TEXTURE_1D, self.gauss_tex[1]);
@@ -1317,8 +1349,8 @@ impl OpenGL32 {
                     dst_fb = self.bloom_fb[1];
                 }
                 else {
-                    src_tex = self.bloom_tex[0];
-                    dst_fb = self.bloom_fb[1];
+                    src_tex = self.bloom_tex[1];
+                    dst_fb = self.bloom_fb[0];
                 }
             }
             // TODO: optimize out last blit
