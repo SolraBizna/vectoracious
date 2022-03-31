@@ -60,15 +60,15 @@ pub struct RenderParams {
     /// only colors brighter than 75% will bloom, and 100% will bloom quite
     /// brightly.
     pub bloom_premat: ColorMatrix,
-    /// The number of pixels for one standard deviation of blur. Default is 16,
+    /// The number of pixels for one standard deviation of blur. Default is 4,
     /// which in combination with the default bloom_iterations results in an
-    /// effective blur radius of 128 "pixels" (but see bloom_density)
+    /// effective blur radius of 32 "pixels"
     ///
     /// A `bloom_radius` of N results in `(N*2+1)*6` samples per pixel (because
     /// we sample out to 3 standard deviations, that number might be 3 times
     /// higher than you expect)
     pub bloom_radius: Vector,
-    /// The number of times to iterate the Gaussian blur. Default is 2.
+    /// The number of times to iterate the Gaussian blur. Default is 4.
     ///
     /// Weird DSP note: Applying an N-radius Gaussian blur M times is exactly
     /// the same as applying an N*M-radius Gaussian blur, but potentially a lot
@@ -94,7 +94,7 @@ impl Default for RenderParams {
                 0.0, 0.0, 4.0,
                 -3.0, -3.0, -3.0,
             ],
-            bloom_radius: Vector::new(8.0, 8.0),
+            bloom_radius: Vector::new(4.0, 4.0),
             bloom_iterations: [4, 4],
             world_mat: [
                 1.0, 0.0, 0.0,

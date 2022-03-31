@@ -882,7 +882,7 @@ impl Renderer for OpenGL32 {
                             let right = -(x * x / (2.0 * radius * radius));
                             buf.push(E.powf(right) * left);
                         }
-                        let total = buf.iter().fold(0.0, |a, &x| a+x);
+                        let total = buf.iter().fold(-buf[0], |a, &x| a+x*2.0);
                         for el in buf.iter_mut() {
                             *el /= total;
                         }
