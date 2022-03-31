@@ -1360,7 +1360,7 @@ impl OpenGL32 {
             gl.BindTexture(GL_TEXTURE_2D, src_tex);
             gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,
                                self.which_ui_fb());
-            gl.ClearColor(0.0, 0.0, 0.0, 0.0);
+            //gl.ClearColor(0.0, 0.0, 0.0, 0.0);
             //gl.Clear(GL_COLOR_BUFFER_BIT);
             gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
         }
