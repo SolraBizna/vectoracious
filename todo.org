@@ -8,3 +8,4 @@
 * TODO bloom undersampling
 * TODO world oversampling
 * TODO make the multisample test work again
+* TODO "show bloom only" mode

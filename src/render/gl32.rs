@@ -785,7 +785,7 @@ impl Renderer for OpenGL32 {
             unsafe {
                 gl.BindTexture(GL_TEXTURE_2D_MULTISAMPLE, self.world_tex);
                 gl.TexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE,
-                                         world_samples as GLint, GL_RGB16F,
+                                         world_samples as GLint, GL_RGBA16F,
                                          world_w as GLint, world_h as GLint,
                                          0);
                 assertgl(gl, "creating multisampled float texture")?;
@@ -824,7 +824,7 @@ impl Renderer for OpenGL32 {
                     self.bound_texture = None;
                     for pong in 0..2 {
                         gl.BindTexture(GL_TEXTURE_2D, self.bloom_tex[pong]);
-                        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGB16F as GLint,
+                        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F as GLint,
                                       bloom_w as GLint, bloom_h as GLint,
                                       0, GL_RGB, GL_HALF_FLOAT, null());
                         gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
