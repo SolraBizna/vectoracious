@@ -103,12 +103,20 @@ struct OpenGL32 {
     ctx: GLContext,
     gl: Procs,
     last_batch_type: LastBatchType,
+    /// Program for drawing model triangles
     program_model: GLuint,
+    /// Program for rendering text quads
     program_text: GLuint,
+    /// Program for straight pixel-to-pixel blit
     program_blit: GLuint,
+    /// Program for Blit-With-Matrix
     program_bwm: GLuint,
+    /// Program for horizontal component of Gaussian blur
     program_bloomx: GLuint,
+    /// Program for vertical component of Gaussian blur
     program_bloomy: GLuint,
+    /// Program for merging two framebuffers by addition
+    program_merge: GLuint,
     bound_texture: Option<GLuint>,
     force_multisample: bool,
     quad_vao: GLuint,
@@ -136,6 +144,22 @@ struct OpenGL32 {
     world_tex: GLuint,
     /// Framebuffer created for the world
     world_fb: GLuint,
+    /// Width of world's multisample resolving framebuffer
+    world_res_w: u32,
+    /// Height of world's multisample resolving framebuffer
+    world_res_h: u32,
+    /// Texture created to resolve the world's multisamples
+    world_res_tex: GLuint,
+    /// Framebuffer created to resolve the world's multisamples
+    world_res_fb: GLuint,
+    /// Width of world's oversample resolving framebuffer
+    world_ds_w: u32,
+    /// Height of world's oversample resolving framebuffer
+    world_ds_h: u32,
+    /// Texture created to resolve the world's oversamples and color matrix
+    world_ds_tex: GLuint,
+    /// Framebuffer created to resolve the world's oversamples and color matrix
+    world_ds_fb: GLuint,
     /// Width of bloom framebuffer
     bloom_w: u32,
     /// Height of bloom framebuffer
@@ -191,6 +215,8 @@ const BLOOM_X_SUPPLEMENT: &[u8] = br#"
 const BLOOM_Y_SUPPLEMENT: &[u8] = br#"
 #define BLOOM_VERT 1
 "#;
+const MERGE_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/merge.frag");
+// merge program uses the blit vertex shader
 
 /// Check for OpenGL errors. If there were any, complain.
 fn assertgl(gl: &Procs, wo: &str) -> anyhow::Result<()> {
@@ -475,7 +501,8 @@ where F: FnMut() -> WindowBuilder
          quad_vb, loc_transform, loc_opacity, loc_colors, program_blit,
          max_multisample_power, program_bwm, ui_tex, bloom_tex, world_tex,
          ui_fb, bloom_fb, world_fb, program_bloomx, program_bloomy,
-         gauss_tex, bloom_vao, bloom_vb, loc_bwm_mat);
+         gauss_tex, bloom_vao, bloom_vb, loc_bwm_mat, world_res_tex,
+         world_res_fb, world_ds_tex, world_ds_fb, program_merge);
     unsafe {
         // If we have the appropriate extension, let's make the debug messages
         // FLY!
@@ -517,6 +544,9 @@ where F: FnMut() -> WindowBuilder
                                             GL_FRAGMENT_SHADER,
                                             &[BLOOM_Y_SUPPLEMENT,
                                               BLOOM_FRAGMENT_SOURCE])?;
+        let fshader_merge = compile_shader(&gl,"the merge fragment shader",
+                                           GL_FRAGMENT_SHADER,
+                                           &[MERGE_FRAGMENT_SOURCE])?;
         program_model = link_program(&gl, "the model shader program",
                                      &[vshader_model, fshader_model])?;
         program_text = link_program(&gl, "the text shader program",
@@ -529,6 +559,8 @@ where F: FnMut() -> WindowBuilder
                                       &[vshader_blit, fshader_bloomx])?;
         program_bloomy = link_program(&gl, "the bloom-y shader program",
                                       &[vshader_blit, fshader_bloomy])?;
+        program_merge = link_program(&gl, "the merge shader program",
+                                     &[vshader_blit, fshader_merge])?;
         gl.DeleteShader(vshader_model);
         gl.DeleteShader(fshader_model);
         gl.DeleteShader(vshader_text);
@@ -536,6 +568,7 @@ where F: FnMut() -> WindowBuilder
         gl.DeleteShader(vshader_blit);
         gl.DeleteShader(fshader_blit);
         gl.DeleteShader(fshader_bwm);
+        gl.DeleteShader(fshader_merge);
         gl.DeleteShader(fshader_bloomx);
         gl.DeleteShader(fshader_bloomy);
         // Generate VAOs, VBOs, textures, and framebuffers
@@ -548,17 +581,21 @@ where F: FnMut() -> WindowBuilder
         quad_ib = vbos[0];
         quad_vb = vbos[1];
         bloom_vb = vbos[2];
-        let mut tex = [0; 6];
+        let mut tex = [0; 8];
         gl.GenTextures(tex.len() as GLint, &mut tex[0]);
         world_tex = tex[0];
         ui_tex = tex[1];
         bloom_tex = [tex[2], tex[3]];
         gauss_tex = [tex[4], tex[5]];
-        let mut fb = [0; 4];
+        world_res_tex = tex[6];
+        world_ds_tex = tex[7];
+        let mut fb = [0; 6];
         gl.GenFramebuffers(fb.len() as GLint, &mut fb[0]);
         world_fb = fb[0];
         ui_fb = fb[1];
         bloom_fb = [fb[2], fb[3]];
+        world_res_fb = fb[4];
+        world_ds_fb = fb[5];
         // Text quad drawing stuff
         gl.BindVertexArray(quad_vao);
         gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, quad_ib);
@@ -625,6 +662,14 @@ where F: FnMut() -> WindowBuilder
         for &prog in &[program_bloomx, program_bloomy] {
             setup_uniforms(&gl, prog, "(a bloom program)", &[
                 (b"gauss\0", &|gl, loc|
+                 gl.Uniform1i(loc, 1)),
+            ]);
+        }
+        for &prog in &[program_merge] {
+            setup_uniforms(&gl, prog, "merge", &[
+                (b"src1\0", &|gl, loc|
+                 gl.Uniform1i(loc, 0)),
+                (b"src2\0", &|gl, loc|
                  gl.Uniform1i(loc, 1)),
             ]);
         }
@@ -751,8 +796,10 @@ where F: FnMut() -> WindowBuilder
         world_w: 0, world_h: 0, world_samples: 0, bloom_w: 0, bloom_h: 0,
         world_super_x: 0, world_super_y: 0, world_tex, world_fb, ui_tex, ui_fb,
         ui_w: 0, ui_h: 0, ui_samples: 0, bloom_fb, bloom_tex, gauss_tex,
-        gauss_radius: [0.0,0.0], program_bloomx, program_bloomy,
-        bloom_vao, bloom_vb, program_blit, is_blending: false,
+        gauss_radius: [0.0,0.0], program_bloomx, program_bloomy, world_res_tex,
+        bloom_vao, bloom_vb, program_blit, is_blending: false, world_res_fb,
+        world_ds_fb, world_ds_tex, world_ds_w: 0, world_ds_h: 0,
+        world_res_w: 0, world_res_h: 0, program_merge,
     }))
 }
 
@@ -771,6 +818,8 @@ impl Renderer for OpenGL32 {
         }
         let world_super_x = 1 << x_os_bits;
         let world_super_y = 1 << y_os_bits;
+        self.world_super_x = world_super_x;
+        self.world_super_y = world_super_y;
         let world_w = w * world_super_x;
         let world_h = h * world_super_y;
         let world_samples = 1 << ms_bits;
@@ -802,14 +851,85 @@ impl Renderer for OpenGL32 {
                 }
             }
         }
-        if params.is_bloom_enabled() /*TODO|| !params.world_mat.is_identity(0.0)*/ {
+        let world_res_w = w * world_super_x;
+        let world_res_h = h * world_super_y;
+        if (self.world_res_w != world_res_w || self.world_res_h != world_res_h)
+        && self.world_samples > 1 {
+            debug!("recreating world-resolve framebuffer at {}x{}",
+                   world_w, world_h);
+            self.world_res_w = world_res_w;
+            self.world_res_h = world_res_h;
+            unsafe {
+                gl.BindTexture(GL_TEXTURE_2D, self.world_res_tex);
+                gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F as GLint,
+                              world_res_w as GLint, world_res_h as GLint,
+                              0, GL_RGBA, GL_HALF_FLOAT, null());
+                gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                 GL_LINEAR as GLint);
+                gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                                 GL_LINEAR as GLint);
+                gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+                                 GL_CLAMP_TO_EDGE as GLint);
+                gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+                                 GL_CLAMP_TO_EDGE as GLint);
+                assertgl(gl, "creating float texture")?;
+                gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_res_fb);
+                gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER,
+                                        GL_COLOR_ATTACHMENT0,
+                                        GL_TEXTURE_2D,
+                                        self.world_res_tex, 0);
+                assertgl(gl, "creating float framebuffer")?;
+                if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
+                    != GL_FRAMEBUFFER_COMPLETE {
+                        return Err(anyhow!("world resolve framebuffer wasn't \
+                                            complete, but had no errors?!"))
+                }
+            }
+        }
+        let world_ds_w = w;
+        let world_ds_h = h;
+        if (self.world_ds_w != world_ds_w || self.world_ds_h != world_ds_h)
+        && (world_super_x > 1 || world_super_y > 1
+            || params.world_mat != COLOR_IDENTITY_MATRIX) {
+            debug!("recreating world-downsample framebuffer at {}x{}",
+                   world_w, world_h);
+            self.world_res_w = world_res_w;
+            self.world_res_h = world_res_h;
+            unsafe {
+                gl.BindTexture(GL_TEXTURE_2D, self.world_res_tex);
+                gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F as GLint,
+                              world_res_w as GLint, world_res_h as GLint,
+                              0, GL_RGBA, GL_HALF_FLOAT, null());
+                gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                 GL_LINEAR as GLint);
+                gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                                 GL_LINEAR as GLint);
+                gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+                                 GL_CLAMP_TO_EDGE as GLint);
+                gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+                                 GL_CLAMP_TO_EDGE as GLint);
+                assertgl(gl, "creating float texture")?;
+                gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_res_fb);
+                gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER,
+                                        GL_COLOR_ATTACHMENT0,
+                                        GL_TEXTURE_2D,
+                                        self.world_res_tex, 0);
+                assertgl(gl, "creating float framebuffer")?;
+                if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
+                    != GL_FRAMEBUFFER_COMPLETE {
+                        return Err(anyhow!("world resolve framebuffer wasn't \
+                                            complete, but had no errors?!"))
+                }
+            }
+        }
+        if params.is_bloom_enabled() {
             let bloom_w = w;
             let bloom_h = h;
             if self.bloom_w != bloom_w || self.bloom_h != bloom_h {
                 // note: bit wasteful, we make two framebuffers even if we're
                 // not doing bloom... meh, we use practically no VRAM otherwise
                 // so we're good!
-                debug!("recreating bloom/resolve framebuffers at {}x{}",
+                debug!("recreating bloom framebuffers at {}x{}",
                        bloom_w, bloom_h);
                 self.bloom_w = bloom_w;
                 self.bloom_h = bloom_h;
@@ -828,9 +948,9 @@ impl Renderer for OpenGL32 {
                                       bloom_w as GLint, bloom_h as GLint,
                                       0, GL_RGB, GL_HALF_FLOAT, null());
                         gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                                         GL_NEAREST as GLint);
+                                         GL_LINEAR as GLint);
                         gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
-                                         GL_NEAREST as GLint);
+                                         GL_LINEAR as GLint);
                         gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
                                          GL_CLAMP_TO_EDGE as GLint);
                         gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
@@ -862,56 +982,53 @@ impl Renderer for OpenGL32 {
                                   GL_STATIC_DRAW);
                 }
             }
-            if params.is_bloom_enabled() {
-                let radii_same = params.bloom_radius.y
-                    == params.bloom_radius.x;
-                for axis in 0 .. 2 {
-                    // if X and Y are the same, don't recalculate for both
-                    if axis == 1 && radii_same { continue }
-                    if self.gauss_radius[axis] != params.bloom_radius[axis] {
-                        let radius = params.bloom_radius[axis];
-                        self.gauss_radius[axis] = radius;
-                        let samples = (radius * 3.0).ceil() as usize + 1;
-                        debug!("creating gauss texture for {} radius \
-                                ({} samples)", radius, samples);
-                        let mut buf: Vec<f32> = Vec::with_capacity(samples);
-                        let left = 1.0 / 2.0 * PI * radius * radius;
-                        
-                        for i in 0 .. samples {
-                            let x = i as f32;
-                            let right = -(x * x / (2.0 * radius * radius));
-                            buf.push(E.powf(right) * left);
+            let radii_same = params.bloom_radius.y
+                == params.bloom_radius.x;
+            for axis in 0 .. 2 {
+                // if X and Y are the same, don't recalculate for both
+                if axis == 1 && radii_same { continue }
+                if self.gauss_radius[axis] != params.bloom_radius[axis] {
+                    let radius = params.bloom_radius[axis];
+                    self.gauss_radius[axis] = radius;
+                    let samples = (radius * 3.0).ceil() as usize + 1;
+                    debug!("creating gauss texture for {} radius \
+                            ({} samples)", radius, samples);
+                    let mut buf: Vec<f32> = Vec::with_capacity(samples);
+                    let left = 1.0 / 2.0 * PI * radius * radius;
+                    for i in 0 .. samples {
+                        let x = i as f32;
+                        let right = -(x * x / (2.0 * radius * radius));
+                        buf.push(E.powf(right) * left);
+                    }
+                    let total = buf.iter().fold(-buf[0], |a, &x| a+x*2.0);
+                    for el in buf.iter_mut() {
+                        *el /= total;
+                    }
+                    unsafe {
+                        gl.BindTexture(GL_TEXTURE_1D,self.gauss_tex[axis]);
+                        gl.TexImage1D(GL_TEXTURE_1D, 0,
+                                      GL_R32F as GLint,
+                                      samples as GLint,
+                                      0, GL_RED, GL_FLOAT,
+                                      transmute(&buf[0]));
+                        gl.TexParameteri(GL_TEXTURE_1D,
+                                         GL_TEXTURE_MIN_FILTER,
+                                         GL_NEAREST as GLint);
+                        gl.TexParameteri(GL_TEXTURE_1D,
+                                         GL_TEXTURE_MAG_FILTER,
+                                         GL_NEAREST as GLint);
+                        let mut progs = Vec::with_capacity(4);
+                        if axis == 0 {
+                            progs.push(self.program_bloomx);
                         }
-                        let total = buf.iter().fold(-buf[0], |a, &x| a+x*2.0);
-                        for el in buf.iter_mut() {
-                            *el /= total;
+                        if axis == 1 || radii_same {
+                            progs.push(self.program_bloomy);
                         }
-                        unsafe {
-                            gl.BindTexture(GL_TEXTURE_1D,self.gauss_tex[axis]);
-                            gl.TexImage1D(GL_TEXTURE_1D, 0,
-                                          GL_R32F as GLint,
-                                          samples as GLint,
-                                          0, GL_RED, GL_FLOAT,
-                                          transmute(&buf[0]));
-                            gl.TexParameteri(GL_TEXTURE_1D,
-                                             GL_TEXTURE_MIN_FILTER,
-                                             GL_NEAREST as GLint);
-                            gl.TexParameteri(GL_TEXTURE_1D,
-                                             GL_TEXTURE_MAG_FILTER,
-                                             GL_NEAREST as GLint);
-                            let mut progs = Vec::with_capacity(4);
-                            if axis == 0 {
-                                progs.push(self.program_bloomx);
-                            }
-                            if axis == 1 || radii_same {
-                                progs.push(self.program_bloomy);
-                            }
-                            for &prog in progs.iter() {
-                                setup_uniforms(&gl, prog, "bloom", &[
-                                    (b"num_samples\0", &|gl, loc|
-                                        gl.Uniform1i(loc, samples as GLint)),
-                                ]);
-                            }
+                        for &prog in progs.iter() {
+                            setup_uniforms(&gl, prog, "bloom", &[
+                                (b"num_samples\0", &|gl, loc|
+                                 gl.Uniform1i(loc, samples as GLint)),
+                            ]);
                         }
                     }
                 }
@@ -957,6 +1074,7 @@ impl Renderer for OpenGL32 {
         }
         unsafe {
             gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_fb);
+            gl.Viewport(0, 0, world_w as GLint, world_h as GLint);
         };
         #[cfg(debug_assertions)]
         assertgl(&self.gl, "starting rendering (this means the error probably \
@@ -975,25 +1093,20 @@ impl Renderer for OpenGL32 {
         self.last_batch_type = LastBatchType::None;
         self.bound_texture = None;
         // STAGE 1: Resolve world, BWM world
-        let world_src_tex = self.resolve_world(params);
-        // If bloom is required, the world is waiting in bloom_fb[1] for its
-        // first round of blurring.
-        // The post-mat world is waiting in the ui framebuffer (which might be
-        // the default framebuffer)
+        let world_src = self.resolve_world(params);
         // STAGE 2: Do bloom (optional)
         if params.is_bloom_enabled() {
-            let world_src_tex = world_src_tex
+            let (world_src_tex, _world_src_fb) = world_src
                 .expect("If bloom is enabled, we expect to be told which \
                          texture to use! (logic error)");
-            unsafe { self.gl.BlendFunc(GL_ONE, GL_ONE); }
             self.do_bloom(params, world_src_tex);
-            unsafe { self.gl.BlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA); }
         }
         // The result of bloom is now waiting in the UI framebuffer (which,
         // again, might be the default framebuffer)
         unsafe {
             self.gl.BindFramebuffer(GL_READ_FRAMEBUFFER, 0);
             self.gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.which_ui_fb());
+            self.gl.Viewport(0, 0, self.ui_w as GLint, self.ui_h as GLint);
             if self.is_blending { self.gl.Enable(GL_BLEND); }
         }
     }
@@ -1019,6 +1132,7 @@ impl Renderer for OpenGL32 {
             unsafe {
                 gl.BindFramebuffer(GL_READ_FRAMEBUFFER, self.ui_fb);
                 gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+                // (viewport will still be OK)
                 gl.BlitFramebuffer(0, 0, self.ui_w as i32, self.ui_h as i32,
                                    0, 0, self.ui_w as i32, self.ui_h as i32,
                                    GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -1232,57 +1346,60 @@ impl OpenGL32 {
         if self.ui_samples > 1 { self.ui_fb }
         else { 0 }
     }
-    fn resolve_world(&mut self, params: &RenderParams) -> Option<GLuint> {
+    fn resolve_world(&mut self, params: &RenderParams)
+        -> Option<(GLuint, GLuint)> {
         let gl = &self.gl;
         let ret;
         unsafe {
             // Okay. The questions that have an effect on our choices:
             let is_bloom_enabled = params.is_bloom_enabled();
             let is_resolve_needed = self.world_samples > 1;
-            if self.world_super_x > 1 || self.world_super_y > 1 {
-                todo!("supersampling");
-            }
-            let is_bwm_needed = false;//TODO !params.world_mat.is_identity(0.0);
+            let is_downsample_needed
+                = self.world_super_x > 1 || self.world_super_y > 1;
+            let is_bwm_needed = params.world_mat != COLOR_IDENTITY_MATRIX;
             // If bloom is NOT enabled, AND there is no need for a BWM...
-            if !is_bloom_enabled && !is_bwm_needed {
+            if !is_bloom_enabled && !is_bwm_needed
+            && self.world_super_x <= 2 && self.world_super_y <= 2 {
                 // ...then we can just blit directly to whichever UI
                 // framebuffer and be done with it.
                 // TODO: cut out world_fb if the pipeline gets really simple
                 gl.BindFramebuffer(GL_READ_FRAMEBUFFER, self.world_fb);
                 gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,
                                    self.which_ui_fb());
-                gl.BlitFramebuffer(0,0, self.ui_w as i32, self.ui_h as i32,
-                                   0,0, self.ui_w as i32, self.ui_h as i32,
-                                   GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                gl.Viewport(0, 0, self.ui_w as GLint, self.ui_h as GLint);
+                let filter = if self.world_super_x > 1 || self.world_super_y > 1 { GL_LINEAR } else { GL_NEAREST };
+                // ;)
+                gl.BlitFramebuffer(0, 0, self.world_w as i32,
+                                   self.world_h as i32,
+                                   0, 0, self.ui_w as i32, self.ui_h as i32,
+                                   GL_COLOR_BUFFER_BIT, filter);
                 ret = None;
             }
             else {
                 // Bloom is enabled OR we need a BWM.
-                let (world_src_tex, world_src_fb);
-                if is_resolve_needed {
+                let (world_src_tex, world_src_fb) = if is_resolve_needed {
                     gl.BindFramebuffer(GL_READ_FRAMEBUFFER, self.world_fb);
-                    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.bloom_fb[1]);
-                    gl.BlitFramebuffer(0,0, self.ui_w as i32, self.ui_h as i32,
-                                       0,0, self.ui_w as i32, self.ui_h as i32,
+                    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_res_fb);
+                    gl.Viewport(0, 0, self.world_res_w as GLint,
+                                self.world_res_h as GLint);
+                    gl.BlitFramebuffer(0, 0, self.world_w as i32,
+                                       self.world_h as i32,
+                                       0, 0, self.world_res_w as i32,
+                                       self.world_res_h as i32,
                                        GL_COLOR_BUFFER_BIT, GL_NEAREST);
-                    (world_src_tex, world_src_fb)
-                        = (self.bloom_tex[1], self.bloom_fb[1]);
+                    (self.bloom_tex[1], self.bloom_fb[1])
+                }
+                else {
+                    (self.world_tex, self.world_fb)
+                };
+                let (world_src_tex, world_src_fb) = if is_downsample_needed {
+                    todo!("downsample shader");
+                    (self.world_ds_tex, self.world_ds_fb)
                 }
                 else {
                     (world_src_tex, world_src_fb)
-                        = (self.world_tex, self.world_fb);
-                }
-                if is_bwm_needed {
-                    todo!("scv");
-                }
-                else {
-                    gl.BindFramebuffer(GL_READ_FRAMEBUFFER, world_src_fb);
-                    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,self.which_ui_fb());
-                    gl.BlitFramebuffer(0,0, self.ui_w as i32, self.ui_h as i32,
-                                       0,0, self.ui_w as i32, self.ui_h as i32,
-                                       GL_COLOR_BUFFER_BIT, GL_NEAREST);
-                }
-                ret = Some(world_src_tex);
+                };
+                ret = Some((world_src_tex, world_src_fb));
             }
         }
         #[cfg(debug_assertions)]
@@ -1291,7 +1408,7 @@ impl OpenGL32 {
     }
     fn do_bloom(&mut self, params: &RenderParams, world_src_tex: GLuint) {
         // NOTE: blending is disabled when we get here
-        let need_color_matrix = true;//TODO !params.bloom_premat.is_identity(0.0);
+        let need_color_matrix = params.bloom_mat != COLOR_IDENTITY_MATRIX;
         let radii_same = params.bloom_radius.y
             == params.bloom_radius.x;
         let gl = &self.gl;
@@ -1299,22 +1416,25 @@ impl OpenGL32 {
             let mut src_tex = world_src_tex;
             let mut dst_fb = self.bloom_fb[0];
             gl.BindVertexArray(self.bloom_vao);
+            gl.Viewport(0, 0, self.bloom_w as GLint, self.bloom_h as GLint);
             // apply the bloom matrix, first of all.
-            gl.UseProgram(self.program_bwm);
-            if self.loc_bwm_mat >= 0 {
-                gl.UniformMatrix4x3fv(self.loc_bwm_mat, 1, 0,
-                                      &params.bloom_premat[0]);
-            }
-            gl.BindTexture(GL_TEXTURE_2D, src_tex);
-            gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, dst_fb);
-            gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
-            if dst_fb == self.bloom_fb[0] {
-                src_tex = self.bloom_tex[0];
-                dst_fb = self.bloom_fb[1];
-            }
-            else {
-                src_tex = self.bloom_tex[1];
-                dst_fb = self.bloom_fb[0];
+            if need_color_matrix {
+                gl.UseProgram(self.program_bwm);
+                if self.loc_bwm_mat >= 0 {
+                    gl.UniformMatrix4x3fv(self.loc_bwm_mat, 1, 0,
+                                          &params.bloom_mat[0]);
+                }
+                gl.BindTexture(GL_TEXTURE_2D, src_tex);
+                gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, dst_fb);
+                gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
+                if dst_fb == self.bloom_fb[0] {
+                    src_tex = self.bloom_tex[0];
+                    dst_fb = self.bloom_fb[1];
+                }
+                else {
+                    src_tex = self.bloom_tex[1];
+                    dst_fb = self.bloom_fb[0];
+                }
             }
             // now do the X iterations
             gl.ActiveTexture(GL_TEXTURE1);
@@ -1354,15 +1474,21 @@ impl OpenGL32 {
                     dst_fb = self.bloom_fb[0];
                 }
             }
-            // TODO: optimize out last blit
-            gl.Enable(GL_BLEND);
-            gl.UseProgram(self.program_blit);
-            gl.BindTexture(GL_TEXTURE_2D, src_tex);
-            gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,
-                               self.which_ui_fb());
-            //gl.ClearColor(0.0, 0.0, 0.0, 0.0);
-            //gl.Clear(GL_COLOR_BUFFER_BIT);
-            gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
+            gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.which_ui_fb());
+            gl.Viewport(0, 0, self.ui_w as GLint, self.ui_h as GLint);
+            if params.show_bloom_only {
+                gl.UseProgram(self.program_merge);
+                gl.BindTexture(GL_TEXTURE_2D, src_tex);
+                gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
+            }
+            else {
+                gl.UseProgram(self.program_merge);
+                gl.ActiveTexture(GL_TEXTURE1);
+                gl.BindTexture(GL_TEXTURE_2D, src_tex);
+                gl.ActiveTexture(GL_TEXTURE0);
+                gl.BindTexture(GL_TEXTURE_2D, world_src_tex);
+                gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
+            }
         }
     }
 }

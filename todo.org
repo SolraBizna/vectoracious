@@ -1,6 +1,6 @@
 #+TITLE: Vectoracious TODO List
 * DONE Add a uniform to clamp the bloom to
-* TODO Framerate counter
+* DONE Framerate counter
 * DONE Actually make bloom work
 * TODO call glViewport
 * TODO handle resizing, like, at all
@@ -8,4 +8,6 @@
 * TODO bloom undersampling
 * TODO world oversampling
 * TODO make the multisample test work again
-* TODO "show bloom only" mode
+* TODO "show bloom only" mode?
+* TODO eliminate 16-bit float usage from Color
+* TODO add alternate bloom modes to demo

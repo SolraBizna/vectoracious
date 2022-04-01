@@ -25,6 +25,14 @@ pub type Scale = nalgebra::Scale2<f32>;
 pub type Translation = nalgebra::Translation2<f32>;
 pub type ColorMatrix = [f32; 12];
 
+pub const COLOR_IDENTITY_MATRIX: ColorMatrix = [
+    1.0, 0.0, 0.0,
+    0.0, 1.0, 0.0,
+    0.0, 0.0, 1.0,
+    0.0, 0.0, 0.0,
+];
+
+#[derive(Clone,Copy,Debug)]
 pub struct RenderParams {
     /// How many effective oversamples are desired, when rendering the world,
     /// in units of powers of two. Thus, 0 = 1x, 1 = 2x, 2 = 4x, 3 = 8x, etc.
@@ -59,7 +67,7 @@ pub struct RenderParams {
     /// The default is to multiply color by 4 but also subtract 3, so that
     /// only colors brighter than 75% will bloom, and 100% will bloom quite
     /// brightly.
-    pub bloom_premat: ColorMatrix,
+    pub bloom_mat: ColorMatrix,
     /// The number of pixels for one standard deviation of blur. Default is 4,
     /// which in combination with the default bloom_iterations results in an
     /// effective blur radius of 32 "pixels"
@@ -80,6 +88,9 @@ pub struct RenderParams {
     /// The default is identity, i.e. the world pixels are drawn without
     /// modification.
     pub world_mat: ColorMatrix,
+    /// If bloom is enabled, this controls whether to draw only the bloom to
+    /// the screen. (Good for tweaking how bloom affects your scene, I guess.)
+    pub show_bloom_only: bool,
 }
 
 impl Default for RenderParams {
@@ -88,7 +99,7 @@ impl Default for RenderParams {
             world_oversamples: 2,
             ui_oversamples: 0,
             bloom_enabled: true,
-            bloom_premat: [
+            bloom_mat: [
                 4.0, 0.0, 0.0,
                 0.0, 4.0, 0.0,
                 0.0, 0.0, 4.0,
@@ -102,6 +113,7 @@ impl Default for RenderParams {
                 0.0, 0.0, 1.0,
                 0.0, 0.0, 0.0,
             ],
+            show_bloom_only: false,
         }
     }
 }
@@ -160,6 +172,9 @@ impl Context {
             text_handler,
             render_params: Default::default(),
         })
+    }
+    pub fn set_render_params(&mut self, params: &RenderParams) {
+        self.render_params = *params
     }
     pub fn begin_rendering_world(&mut self) -> anyhow::Result<RenderWorld> {
         self.renderer.begin_rendering(&self.render_params)?;
