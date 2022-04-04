@@ -5,9 +5,11 @@
 * TODO call glViewport
 * TODO handle resizing, like, at all
 * TODO extension blacklist
+* TODO forced disabling/limiting of multisampling
 * TODO bloom undersampling
 * TODO world oversampling
 * TODO make the multisample test work again
+* TODO test if GL_LINEAR framebuffer blits work correctly for 2x/4x downsample
 * TODO "show bloom only" mode?
 * TODO eliminate 16-bit float usage from Color
 * TODO add alternate bloom modes to demo
