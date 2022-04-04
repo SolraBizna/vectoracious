@@ -61,6 +61,12 @@ pub struct RenderParams {
     /// `bloom_radius` and `bloom_iterations` must be nonzero.)
     /// Bloom is enabled by default.
     pub bloom_enabled: bool,
+    /// Number of *undersamples* desired when rendering the bloom, in units of
+    /// powers of two. 0 = the bloom will be carried out at full resolution.
+    /// 1 = halved in one direction, 2 = halved in both directions, and so on.
+    ///
+    /// Default: 2
+    pub bloom_undersamples: u32,
     /// Color matrix to multiply by before applying the bloom blur. Note that
     /// alpha is fixed at one, so you can specify an offset here.
     ///
@@ -99,6 +105,7 @@ impl Default for RenderParams {
             world_oversamples: 2,
             ui_oversamples: 0,
             bloom_enabled: true,
+            bloom_undersamples: 2,
             bloom_mat: [
                 4.0, 0.0, 0.0,
                 0.0, 4.0, 0.0,
