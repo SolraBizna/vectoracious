@@ -1387,7 +1387,7 @@ impl OpenGL32 {
                                        0, 0, self.world_res_w as i32,
                                        self.world_res_h as i32,
                                        GL_COLOR_BUFFER_BIT, GL_NEAREST);
-                    (self.bloom_tex[1], self.bloom_fb[1])
+                    (self.world_res_tex, self.world_res_fb)
                 }
                 else {
                     (self.world_tex, self.world_fb)
