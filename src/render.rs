@@ -48,9 +48,9 @@ pub(crate) trait Renderer {
     fn present(&mut self);
     /// Return the current drawable size.
     fn get_size(&self) -> (u32, u32);
-    #[allow(unused_variables)]
-    /// Attempt to resize the drawable.
-    fn resize(&self, w: u32, h: u32) -> Result<(),()> { Err(()) }
+    /// Attempt to resize the underlying drawable when the window size is
+    /// reported as changed.
+    fn resized(&self, w: u32, h: u32) -> anyhow::Result<()>;
 }
 
 pub(crate) fn create_renderer<F>(video: &VideoSubsystem, mut builder_maker: F)

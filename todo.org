@@ -2,8 +2,8 @@
 * DONE Add a uniform to clamp the bloom to
 * DONE Framerate counter
 * DONE Actually make bloom work
-* TODO call glViewport
-* TODO handle resizing, like, at all
+* DONE call glViewport
+* DONE handle resizing, like, at all
 * TODO extension blacklist
 * TODO forced disabling/limiting of multisampling
 * DONE bloom undersampling
