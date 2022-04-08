@@ -3,6 +3,7 @@ use super::*;
 use core::slice;
 use std::{
     collections::HashMap,
+    env,
     f32::consts::{E,PI},
     fmt::Write,
     io::Write as _, // we just want its trait methods
@@ -293,7 +294,7 @@ extern "C" fn debug_callback(source: GLenum, typ: GLenum, id: GLuint,
                   source, typ, id, message);
         },
     }
-    if std::env::var_os("RUST_BACKTRACE").is_some() {
+    if env::var_os("RUST_BACKTRACE").is_some() {
         let mut backtrace = String::new();
         backtrace::trace(|frame| {
             backtrace::resolve_frame(frame, |res| {
@@ -754,13 +755,34 @@ where F: FnMut() -> WindowBuilder
                               1.0, 1.0, 1.0, 1.0,
                           ].as_ptr());
         }
-        let mut max = 0;
-        gl.GetIntegerv(GL_MAX_SAMPLES, &mut max);
-        if max >= 32 { max_multisample_power = 5 }
-        else if max >= 16 { max_multisample_power = 4 }
-        else if max >= 8 { max_multisample_power = 3 }
-        else if max >= 4 { max_multisample_power = 2 }
-        else if max >= 2 { max_multisample_power = 1 }
+        let mut max_sample_count = 0;
+        gl.GetIntegerv(GL_MAX_SAMPLES, &mut max_sample_count);
+        if let Ok(value) = env::var("GL_MAX_SAMPLES") {
+            match value.parse::<GLint>() {
+                Ok(x) => {
+                    let x = x.max(1);
+                    if x > max_sample_count {
+                        warn!("GL_MAX_SAMPLES found in environment, but the \
+                               GL-reported value ({}) was smaller than the \
+                               provided value ({}). Using the GL-reported \
+                               value.", max_sample_count, x);
+                    }
+                    else {
+                        info!("GL_MAX_SAMPLES found in environment. \
+                               Overriding GL-reported value ({}) with \
+                               provided value ({})", max_sample_count, x);
+                        max_sample_count = x;
+                    }
+                },
+                _ => warn!("GL_MAX_SAMPLES environment variable had a non-\
+                            parseable value. Ignoring."),
+            }
+        }
+        if max_sample_count >= 32 { max_multisample_power = 5 }
+        else if max_sample_count >= 16 { max_multisample_power = 4 }
+        else if max_sample_count >= 8 { max_multisample_power = 3 }
+        else if max_sample_count >= 4 { max_multisample_power = 2 }
+        else if max_sample_count >= 2 { max_multisample_power = 1 }
         else { max_multisample_power = 0 }
         assertgl(&gl, "initializing the context")?;
         // Before we're done, check for Mesa bug #4613.
