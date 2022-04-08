@@ -1426,8 +1426,7 @@ impl Renderer for OpenGL32 {
                     let color = color_overrides.get(n)
                         .unwrap_or(&model.colors[n]);
                     gl.Uniform4f(self.loc_colors + (n as GLint),
-                                 color.r.to_f32(), color.g.to_f32(),
-                                 color.b.to_f32(), color.a.to_f32());
+                                 color.r, color.g, color.b, color.a);
                 }
             }
             gl.DrawElements(GL_TRIANGLES, cached.num_elements,

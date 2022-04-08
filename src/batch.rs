@@ -63,9 +63,14 @@ impl TextBatchable for MergedTextBatch {
         }
         self.verts[atlas].push(MergedTextVert {
             x: f16::from_f32(x), y: f16::from_f32(y), u, v,
-            fill_r: fill.r, fill_g: fill.g, fill_b: fill.b, fill_a: fill.a,
-            stroke_r: stroke.r, stroke_g: stroke.g, stroke_b: stroke.b,
-            stroke_a: stroke.a,
+            fill_r: f16::from_f32(fill.r),
+            fill_g: f16::from_f32(fill.g),
+            fill_b: f16::from_f32(fill.b),
+            fill_a: f16::from_f32(fill.a),
+            stroke_r: f16::from_f32(stroke.r),
+            stroke_g: f16::from_f32(stroke.g),
+            stroke_b: f16::from_f32(stroke.b),
+            stroke_a: f16::from_f32(stroke.a),
         });
     }
     fn clear(&mut self) {
@@ -86,9 +91,14 @@ impl TextBatchable for SplitTextBatch {
             x: f16::from_f32(x), y: f16::from_f32(y), u, v,
         });
         self.prims[atlas].push(SplitTextPrim {
-            fill_r: fill.r, fill_g: fill.g, fill_b: fill.b, fill_a: fill.a,
-            stroke_r: stroke.r, stroke_g: stroke.g, stroke_b: stroke.b,
-            stroke_a: stroke.a,
+            fill_r: f16::from_f32(fill.r),
+            fill_g: f16::from_f32(fill.g),
+            fill_b: f16::from_f32(fill.b),
+            fill_a: f16::from_f32(fill.a),
+            stroke_r: f16::from_f32(stroke.r),
+            stroke_g: f16::from_f32(stroke.g),
+            stroke_b: f16::from_f32(stroke.b),
+            stroke_a: f16::from_f32(stroke.a),
         });
     }
     fn clear(&mut self) {

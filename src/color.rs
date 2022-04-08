@@ -6,10 +6,10 @@ use std::{
 };
 
 #[derive(Clone,Copy)]
-pub struct Color { pub r: f16, pub g: f16, pub b: f16, pub a: f16 }
+pub struct Color { pub r: f32, pub g: f32, pub b: f32, pub a: f32 }
 
-fn debug_out_component(c: f16, fmt: &mut Formatter<'_>) -> FmtResult {
-    let c = (c.to_f32() * 10000.0).round() as i32;
+fn debug_out_component(c: f32, fmt: &mut Formatter<'_>) -> FmtResult {
+    let c = (c * 10000.0).round() as i32;
     let (sign, c) = if c < 0 { ('-', -c) } else { ('+', c) };
     write!(fmt, "{}", sign)?;
     if c > 99999 { write!(fmt, "*.***") }
@@ -87,8 +87,8 @@ impl Color {
           B: SrgbComponent, A: EncodedComponent
     {
         Color {
-            r: r.to_linear_half(), g: g.to_linear_half(),
-            b: b.to_linear_half(), a: a.to_half(),
+            r: r.to_linear_float(), g: g.to_linear_float(),
+            b: b.to_linear_float(), a: a.to_float(),
         }
     }
     /// Create a color from the given linear color. Components may be encoded
@@ -98,19 +98,19 @@ impl Color {
           B: EncodedComponent, A: EncodedComponent
     {
         Color {
-            r: r.to_half(), g: g.to_half(),
-            b: b.to_half(), a: a.to_half(),
+            r: r.to_float(), g: g.to_float(),
+            b: b.to_float(), a: a.to_float(),
         }
     }
     /// Assuming this `Color` has not yet been premultiplied, this returns a
     /// premultiplied version of the color.
     pub fn premultiplied(&self) -> Color {
-        let a = self.a.to_f32();
+        let a = self.a;
         Color {
-            r: f16::from_f32(self.r.to_f32() * a),
-            g: f16::from_f32(self.g.to_f32() * a),
-            b: f16::from_f32(self.b.to_f32() * a),
-            a: self.a,
+            r: self.r * a,
+            g: self.g * a,
+            b: self.b * a,
+            a,
         }
     }
     /// Make a color less (or more) opaque based on a passed-in opacity value.
@@ -120,10 +120,10 @@ impl Color {
         }
         else {
             Color {
-                r: f16::from_f32(self.r.to_f32() * a),
-                g: f16::from_f32(self.g.to_f32() * a),
-                b: f16::from_f32(self.b.to_f32() * a),
-                a: f16::from_f32(self.a.to_f32() * a),
+                r: self.r * a,
+                g: self.g * a,
+                b: self.b * a,
+                a: self.a * a,
             }
         }
     }
@@ -132,10 +132,10 @@ impl Color {
     pub fn lerp(&self, other: Color, a: f32) -> Color {
         let r_a = 1.0 - a;
         Color {
-            r: f16::from_f32(self.r.to_f32() * r_a + other.r.to_f32() * a),
-            g: f16::from_f32(self.g.to_f32() * r_a + other.g.to_f32() * a),
-            b: f16::from_f32(self.b.to_f32() * r_a + other.b.to_f32() * a),
-            a: f16::from_f32(self.a.to_f32() * r_a + other.a.to_f32() * a),
+            r: self.r * r_a + other.r * a,
+            g: self.g * r_a + other.g * a,
+            b: self.b * r_a + other.b * a,
+            a: self.a * r_a + other.a * a,
         }
     }
 }
@@ -144,10 +144,10 @@ impl Mul<f32> for &Color {
     type Output = Color;
     fn mul(self, rhs: f32) -> Color {
         Color {
-            r: f16::from_f32(self.r.to_f32() * rhs),
-            g: f16::from_f32(self.g.to_f32() * rhs),
-            b: f16::from_f32(self.b.to_f32() * rhs),
-            a: f16::from_f32(self.a.to_f32() * rhs),
+            r: self.r * rhs,
+            g: self.g * rhs,
+            b: self.b * rhs,
+            a: self.a * rhs,
         }
     }
 }
