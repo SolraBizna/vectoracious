@@ -121,6 +121,8 @@ struct OpenGL32 {
     /// Program for merging two framebuffers by addition, one of which is
     /// smaller than the other
     program_mergeup: GLuint,
+    /// Program for downsampling a framebuffer
+    program_downsample: GLuint,
     /// Program for downsampling a framebuffer and also applying a color matrix
     program_downsample_wm: GLuint,
     bound_texture: Option<GLuint>,
@@ -223,18 +225,22 @@ const BWM_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/bwm.frag");
 // bwm program uses the blit vertex shader
 const BLOOM_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/bloom.frag");
 // bloom program uses the blit vertex shader
+const MERGE_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/merge.frag");
+// merge program uses the blit vertex shader
+const MERGEUP_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/mergeup.frag");
+// mergeup program uses the blit vertex shader
+const DOWNSAMPLE_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/downsample.frag");
+// downsample ALSO uses the blit vertex shader, foo
+
 const BLOOM_X_SUPPLEMENT: &[u8] = br#"
 #define BLOOM_HORIZ 1
 "#;
 const BLOOM_Y_SUPPLEMENT: &[u8] = br#"
 #define BLOOM_VERT 1
 "#;
-const MERGE_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/merge.frag");
-// merge program uses the blit vertex shader
-const MERGEUP_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/mergeup.frag");
-// mergeup program uses the blit vertex shader
-const DOWNSAMPLE_WM_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/dwm.frag");
-// downsample with matrix ALSO uses the blit vertex shader, foo
+const WITH_MATRIX_SUPPLEMENT: &[u8] = br#"
+#define WITH_MATRIX 1
+"#;
 
 /// Check for OpenGL errors. If there were any, complain.
 fn assertgl(gl: &Procs, wo: &str) -> anyhow::Result<()> {
@@ -521,8 +527,8 @@ where F: FnMut() -> WindowBuilder
          ui_fb, bloom_fb, world_fb, program_bloomx, program_bloomy,
          gauss_tex, bloom_vao, bloom_vb, loc_bwm_mat, world_res_tex,
          world_res_fb, world_ds_tex, world_ds_fb, program_merge, ui_vb,
-         world_ds_vb, program_downsample_wm, ui_vao, world_ds_vao,
-         program_mergeup);
+         world_ds_vb, program_downsample, program_downsample_wm, ui_vao,
+         world_ds_vao, program_mergeup);
     unsafe {
         // If we have the appropriate extension, let's make the debug messages
         // FLY!
@@ -570,10 +576,15 @@ where F: FnMut() -> WindowBuilder
         let fshader_mergeup = compile_shader(&gl,"the mergeup fragment shader",
                                              GL_FRAGMENT_SHADER,
                                              &[MERGEUP_FRAGMENT_SOURCE])?;
+        let fshader_downsample
+            = compile_shader(&gl, "the downsample fragment shader",
+                             GL_FRAGMENT_SHADER,
+                             &[DOWNSAMPLE_FRAGMENT_SOURCE])?;
         let fshader_downsample_wm
             = compile_shader(&gl,"the downsample with matrix shader",
                              GL_FRAGMENT_SHADER,
-                             &[DOWNSAMPLE_WM_FRAGMENT_SOURCE])?;
+                             &[WITH_MATRIX_SUPPLEMENT,
+                               DOWNSAMPLE_FRAGMENT_SOURCE])?;
         program_model = link_program(&gl, "the model shader program",
                                      &[vshader_model, fshader_model])?;
         program_text = link_program(&gl, "the text shader program",
@@ -590,6 +601,8 @@ where F: FnMut() -> WindowBuilder
                                      &[vshader_blit, fshader_merge])?;
         program_mergeup = link_program(&gl, "the mergeup shader program",
                                        &[vshader_blit, fshader_mergeup])?;
+        program_downsample = link_program(&gl, "the downsample program",
+                                          &[vshader_blit, fshader_downsample])?;
         program_downsample_wm = link_program(&gl, "downsample with matrix",
                                              &[vshader_blit, fshader_downsample_wm])?;
         
@@ -605,6 +618,7 @@ where F: FnMut() -> WindowBuilder
         gl.DeleteShader(fshader_mergeup);
         gl.DeleteShader(fshader_bloomx);
         gl.DeleteShader(fshader_bloomy);
+        gl.DeleteShader(fshader_downsample);
         gl.DeleteShader(fshader_downsample_wm);
         // Generate VAOs, VBOs, textures, and framebuffers
         let mut vaos = [0; 4];
@@ -696,7 +710,8 @@ where F: FnMut() -> WindowBuilder
         gl.PixelStorei(GL_UNPACK_ALIGNMENT, 1);
         // Oh, and let's set the uniforms and/or find them!
         for &prog in &[program_blit, program_bwm, program_bloomx,
-                       program_bloomy, program_downsample_wm] {
+                       program_bloomy, program_downsample,
+                       program_downsample_wm] {
             setup_uniforms(&gl, prog, "(a blit program)", &[
                 (b"src\0", &|gl, loc|
                  gl.Uniform1i(loc, 0)),
@@ -864,7 +879,7 @@ where F: FnMut() -> WindowBuilder
         program_bloomx, program_bloomy, world_res_tex, bloom_vao, bloom_vb,
         program_blit, is_blending: false, world_res_fb, world_ds_fb,
         world_ds_tex, world_ds_w: 0, world_ds_h: 0, world_res_w: 0,
-        world_res_h: 0, program_merge, world_ds_vb, ui_vb,
+        world_res_h: 0, program_merge, world_ds_vb, ui_vb, program_downsample,
         program_downsample_wm, ui_vao, world_ds_vao, program_mergeup,
     }))
 }
@@ -879,9 +894,6 @@ impl Renderer for OpenGL32 {
         let os_bits = num_samples - ms_bits;
         let x_os_bits = os_bits / 2;
         let y_os_bits = (os_bits + 1) / 2; // ??!
-        if x_os_bits != 0 || y_os_bits != 0 {
-            todo!("supersampling bwm")
-        }
         let world_super_x = 1 << x_os_bits;
         let world_super_y = 1 << y_os_bits;
         self.world_super_x = world_super_x;
@@ -904,22 +916,50 @@ impl Renderer for OpenGL32 {
             self.world_h = world_h;
             self.world_samples = world_samples;
             unsafe {
-                gl.BindTexture(GL_TEXTURE_2D_MULTISAMPLE, self.world_tex);
-                gl.TexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE,
-                                         world_samples as GLint, GL_RGBA16F,
-                                         world_w as GLint, world_h as GLint,
-                                         0);
-                assertgl(gl, "creating multisampled float texture")?;
-                gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_fb);
-                gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER,
-                                        GL_COLOR_ATTACHMENT0,
-                                        GL_TEXTURE_2D_MULTISAMPLE,
-                                        self.world_tex, 0);
-                assertgl(gl, "creating multisampled framebuffer")?;
-                if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
+                if self.world_samples > 1 {
+                    gl.BindTexture(GL_TEXTURE_2D_MULTISAMPLE, self.world_tex);
+                    gl.TexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE,
+                                             world_samples as GLint,GL_RGBA16F,
+                                             world_w as GLint,world_h as GLint,
+                                             0);
+                    assertgl(gl, "creating multisampled float texture")?;
+                    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_fb);
+                    gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER,
+                                            GL_COLOR_ATTACHMENT0,
+                                            GL_TEXTURE_2D_MULTISAMPLE,
+                                            self.world_tex, 0);
+                    assertgl(gl, "creating multisampled framebuffer")?;
+                    if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
                     != GL_FRAMEBUFFER_COMPLETE {
                         return Err(anyhow!("world framebuffer wasn't \
                                             complete, but had no errors?!"))
+                    }
+                }
+                else {
+                    gl.BindTexture(GL_TEXTURE_2D, self.world_tex);
+                    gl.TexImage2D(GL_TEXTURE_2D, 0,GL_RGBA16F as GLint,
+                                             world_w as GLint,world_h as GLint,
+                                             0,GL_RGBA,GL_HALF_FLOAT,null());
+                    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                     GL_LINEAR as GLint);
+                    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                                     GL_LINEAR as GLint);
+                    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+                                     GL_CLAMP_TO_EDGE as GLint);
+                    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+                                     GL_CLAMP_TO_EDGE as GLint);
+                    assertgl(gl, "creating multisampled float texture")?;
+                    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_fb);
+                    gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER,
+                                            GL_COLOR_ATTACHMENT0,
+                                            GL_TEXTURE_2D,
+                                            self.world_tex, 0);
+                    assertgl(gl, "creating multisampled framebuffer")?;
+                    if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
+                    != GL_FRAMEBUFFER_COMPLETE {
+                        return Err(anyhow!("world framebuffer wasn't \
+                                            complete, but had no errors?!"))
+                    }
                 }
             }
         }
@@ -961,16 +1001,15 @@ impl Renderer for OpenGL32 {
         let world_ds_w = w;
         let world_ds_h = h;
         if (self.world_ds_w != world_ds_w || self.world_ds_h != world_ds_h)
-        && (world_super_x > 1 || world_super_y > 1
-            || params.world_mat != COLOR_IDENTITY_MATRIX) {
+        && (world_super_x > 1 || world_super_y > 1) {
             debug!("recreating world-downsample framebuffer at {}x{}",
-                   world_w, world_h);
-            self.world_res_w = world_res_w;
-            self.world_res_h = world_res_h;
+                   world_ds_w, world_ds_h);
+            self.world_ds_w = world_ds_w;
+            self.world_ds_h = world_ds_h;
             unsafe {
-                gl.BindTexture(GL_TEXTURE_2D, self.world_res_tex);
+                gl.BindTexture(GL_TEXTURE_2D, self.world_ds_tex);
                 gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F as GLint,
-                              world_res_w as GLint, world_res_h as GLint,
+                              world_ds_w as GLint, world_ds_h as GLint,
                               0, GL_RGBA, GL_HALF_FLOAT, null());
                 gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
                                  GL_LINEAR as GLint);
@@ -981,11 +1020,11 @@ impl Renderer for OpenGL32 {
                 gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
                                  GL_CLAMP_TO_EDGE as GLint);
                 assertgl(gl, "creating float texture")?;
-                gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_res_fb);
+                gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_ds_fb);
                 gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER,
                                         GL_COLOR_ATTACHMENT0,
                                         GL_TEXTURE_2D,
-                                        self.world_res_tex, 0);
+                                        self.world_ds_tex, 0);
                 assertgl(gl, "creating float framebuffer")?;
                 if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
                     != GL_FRAMEBUFFER_COMPLETE {
@@ -994,9 +1033,9 @@ impl Renderer for OpenGL32 {
                     }
                 let buf = [
                     -1.0, -1.0, 0.0, 0.0,
-                    1.0, -1.0, world_res_w as f32 + 0.0, 0.0,
-                    1.0, 1.0, world_res_w as f32 + 0.0, world_res_h as f32+0.0,
-                    -1.0, 1.0, 0.0, world_res_h as f32 + 0.0,
+                    1.0, -1.0, world_ds_w as f32, 0.0,
+                    1.0, 1.0, world_ds_w as f32, world_ds_h as f32,
+                    -1.0, 1.0, 0.0, world_ds_h as f32,
                 ];
                 gl.BindBuffer(GL_ARRAY_BUFFER, self.world_ds_vb);
                 gl.BufferData(GL_ARRAY_BUFFER, 64, transmute(&buf[0]),
@@ -1054,9 +1093,9 @@ impl Renderer for OpenGL32 {
                     // while we're at it, make a new buffer for the "vertices"
                     let buf = [
                         -1.0, -1.0, 0.0, 0.0,
-                        1.0, -1.0, bloom_w as f32 + 0.0, 0.0,
-                        1.0, 1.0, bloom_w as f32 + 0.0, bloom_h as f32 + 0.0,
-                        -1.0, 1.0, 0.0, bloom_h as f32 + 0.0,
+                        1.0, -1.0, bloom_w as f32, 0.0,
+                        1.0, 1.0, bloom_w as f32, bloom_h as f32,
+                        -1.0, 1.0, 0.0, bloom_h as f32,
                     ];
                     gl.BindBuffer(GL_ARRAY_BUFFER, self.bloom_vb);
                     gl.BufferData(GL_ARRAY_BUFFER, 64, transmute(&buf[0]),
@@ -1155,9 +1194,9 @@ impl Renderer for OpenGL32 {
             unsafe {
                 let buf = [
                     -1.0, -1.0, 0.0, 0.0,
-                    1.0, -1.0, ui_w as f32 + 0.0, 0.0,
-                    1.0, 1.0, ui_w as f32 + 0.0, ui_h as f32 + 0.0,
-                    -1.0, 1.0, 0.0, ui_h as f32 + 0.0,
+                    1.0, -1.0, ui_w as f32, 0.0,
+                    1.0, 1.0, ui_w as f32, ui_h as f32,
+                    -1.0, 1.0, 0.0, ui_h as f32,
                 ];
                 gl.BindBuffer(GL_ARRAY_BUFFER, self.ui_vb);
                 gl.BufferData(GL_ARRAY_BUFFER, 64, transmute(&buf[0]),
@@ -1487,7 +1526,23 @@ impl OpenGL32 {
                     (self.world_tex, self.world_fb)
                 };
                 let (world_src_tex, world_src_fb) = if is_downsample_needed {
-                    todo!("downsample shader");
+                    gl.UseProgram(self.program_downsample);
+                    setup_uniforms(&gl, self.program_downsample,
+                                   "downsampling", &[
+                                       (b"dim\0", &|gl, loc|
+                                        gl.Uniform3i(loc,
+                                                     self.world_super_x as GLint,
+                                                     self.world_super_y as GLint,
+                                                     (self.world_super_x *
+                                                      self.world_super_y)
+                                                     as GLint)),
+                                   ]);
+                    gl.BindTexture(GL_TEXTURE_2D, world_src_tex);
+                    gl.Viewport(0, 0, self.world_ds_w as i32,
+                                self.world_ds_h as i32);
+                    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_ds_fb);
+                    gl.BindVertexArray(self.world_ds_vao);
+                    gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT,null());
                     (self.world_ds_tex, self.world_ds_fb)
                 }
                 else {
@@ -1515,7 +1570,6 @@ impl OpenGL32 {
             if self.bloom_under_x > 1 || self.bloom_under_y > 1 {
                 // TODO: if no bloom matrix, have a special program for that
                 gl.UseProgram(self.program_downsample_wm);
-                // TODO: replace all of these with the rusty thing
                 setup_uniforms(&gl, self.program_downsample_wm,
                                "downsampling with matrix", &[
                                    (b"mat\0", &|gl, loc|

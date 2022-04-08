@@ -7,11 +7,11 @@
 * TODO extension blacklist
 * DONE forced disabling/limiting of multisampling
 * DONE bloom undersampling
-* TODO world oversampling
+* DONE world oversampling
 * TODO world undersampling
 * TODO make the multisample test work again
 * TODO test if GL_LINEAR framebuffer blits work correctly for 2x/4x downsample
 * DONE "show bloom only" mode?
-* TODO eliminate 16-bit float usage from Color
+* DONE eliminate 16-bit float usage from Color
 * TODO add alternate bloom modes to demo
 * TODO splitscreen support
