@@ -1985,10 +1985,16 @@ impl Procs {
             procs,
             has_ARB_debug_output: false,
         };
+        let disabled_extensions = std::env::var("GL_DISABLED_EXTENSIONS");
+        let disabled_extensions = disabled_extensions.as_ref()
+            .map(|x| x.as_bytes()).unwrap_or(b"");
+        let disabled_extensions
+            = build_disabled_extension_list(disabled_extensions);
         let mut num_extensions = 0;
         unsafe { ret.GetIntegerv(GL_NUM_EXTENSIONS, &mut num_extensions) };
         for i in 0 .. num_extensions as GLuint {
             let ext = unsafe {CStr::from_ptr(transmute(ret.GetStringi(GL_EXTENSIONS, i)))}.to_bytes();
+            if disabled_extensions.contains(ext) { continue }
             match ext {
                 b"GL_ARB_debug_output" => ret.has_ARB_debug_output = true,
             _ => (),
@@ -2682,4 +2688,19 @@ impl Procs {
     #[inline(always)] pub unsafe fn WindowPos3iv(&self, v: *const GLint) { (transmute::<_, extern "C" fn(v: *const GLint)>(self.procs[663]))(v) }
     #[inline(always)] pub unsafe fn WindowPos3s(&self, x: GLshort, y: GLshort, z: GLshort) { (transmute::<_, extern "C" fn(x: GLshort, y: GLshort, z: GLshort)>(self.procs[664]))(x, y, z) }
     #[inline(always)] pub unsafe fn WindowPos3sv(&self, v: *const GLshort) { (transmute::<_, extern "C" fn(v: *const GLshort)>(self.procs[665]))(v) }
+}
+
+fn build_disabled_extension_list(disabled_extensions: &[u8])
+            -> std::collections::HashSet<&[u8]> {
+    disabled_extensions.split(|&x| {
+        !((x >= b'0' && x <= b'9')
+          || (x >= b'A' && x <= b'Z')
+          || (x >= b'a' && x <= b'z')
+          || (x == b'_'))
+    }).filter_map(|x| {
+        match x {
+            b"" => None,
+            x => Some(x)
+        }
+    }).collect()
 }

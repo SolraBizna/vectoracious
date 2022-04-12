@@ -4,7 +4,7 @@
 * DONE Actually make bloom work
 * DONE call glViewport
 * DONE handle resizing, like, at all
-* TODO extension blacklist
+* DONE extension blacklist
 * DONE forced disabling/limiting of multisampling
 * DONE bloom undersampling
 * DONE world oversampling
@@ -15,3 +15,5 @@
 * DONE eliminate 16-bit float usage from Color
 * TODO add alternate bloom modes to demo
 * TODO splitscreen support
+* TODO support 10-bit color
+* TODO all the code paths with bloom completely disabled D:
