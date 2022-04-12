@@ -8,7 +8,7 @@
 * DONE forced disabling/limiting of multisampling
 * DONE bloom undersampling
 * DONE world oversampling
-* TODO world undersampling
+* DONE world undersampling
 * TODO make the multisample test work again
 * TODO test if GL_LINEAR framebuffer blits work correctly for 2x/4x downsample
 * DONE "show bloom only" mode?

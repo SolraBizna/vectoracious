@@ -121,6 +121,9 @@ struct OpenGL32 {
     /// Program for merging two framebuffers by addition, one of which is
     /// smaller than the other
     program_mergeup: GLuint,
+    /// Program for merging something
+    /// TODO: better documentation
+    program_upmergeup: GLuint,
     /// Program for downsampling a framebuffer
     program_downsample: GLuint,
     /// Program for downsampling a framebuffer and also applying a color matrix
@@ -135,6 +138,10 @@ struct OpenGL32 {
     ui_vb: GLuint,
     world_ds_vao: GLuint,
     world_ds_vb: GLuint,
+    /// this VAO has normalized texture coordinates, instead of depending on
+    /// the size
+    updog_vao: GLuint,
+    updog_vb: GLuint,
     model_cache: ModelCache,
     loc_transform: GLint,
     loc_opacity: GLint,
@@ -200,6 +207,8 @@ struct OpenGL32 {
     gauss_tex: [GLuint; 2],
     /// The standard deviation radius currently stored in the Gauss texture
     gauss_radius: [f32; 2],
+    /// True if the world is being rendered undersampled
+    world_is_undersampled: bool,
 }
 
 /// Number of bytes to make our VBOs
@@ -229,6 +238,8 @@ const MERGE_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/merge.frag");
 // merge program uses the blit vertex shader
 const MERGEUP_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/mergeup.frag");
 // mergeup program uses the blit vertex shader
+const UPMERGEUP_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/upmergeup.frag");
+// upmergeup program uses the blit vertex shader
 const DOWNSAMPLE_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/downsample.frag");
 // downsample ALSO uses the blit vertex shader, foo
 
@@ -278,7 +289,7 @@ extern "C" fn debug_callback(source: GLenum, typ: GLenum, id: GLuint,
         GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR_ARB => "undefined behavior".to_owned(),
         GL_DEBUG_TYPE_PORTABILITY_ARB => "unportable usage".to_owned(),
         GL_DEBUG_TYPE_PERFORMANCE_ARB => "poorly-performing usage".to_owned(),
-        GL_DEBUG_TYPE_OTHER_ARB => "something spooky".to_owned(),
+        GL_DEBUG_TYPE_OTHER_ARB => if severity <= GL_DEBUG_SEVERITY_LOW_ARB { "something boring".to_owned() } else { "something spooky".to_owned() },
         x => format!("(unknown 0x{:x})", x),
     };
     let message = unsafe {
@@ -295,9 +306,13 @@ extern "C" fn debug_callback(source: GLenum, typ: GLenum, id: GLuint,
             warn!("{} detected {}: [MEDIUM, {}] {}",
                   source, typ, id, message);
         },
-        _ => {
-            warn!("{} detected {}: [LOW, {}] {}",
+        GL_DEBUG_SEVERITY_LOW_ARB => {
+            info!("{} detected {}: [LOW, {}] {}",
                   source, typ, id, message);
+        },
+        _ => {
+            debug!("{} detected {}: [???, {}] {}",
+                   source, typ, id, message);
         },
     }
     if env::var_os("RUST_BACKTRACE").is_some() {
@@ -528,7 +543,8 @@ where F: FnMut() -> WindowBuilder
          gauss_tex, bloom_vao, bloom_vb, loc_bwm_mat, world_res_tex,
          world_res_fb, world_ds_tex, world_ds_fb, program_merge, ui_vb,
          world_ds_vb, program_downsample, program_downsample_wm, ui_vao,
-         world_ds_vao, program_mergeup);
+         world_ds_vao, program_mergeup, program_upmergeup, updog_vao,
+         updog_vb);
     unsafe {
         // If we have the appropriate extension, let's make the debug messages
         // FLY!
@@ -576,6 +592,10 @@ where F: FnMut() -> WindowBuilder
         let fshader_mergeup = compile_shader(&gl,"the mergeup fragment shader",
                                              GL_FRAGMENT_SHADER,
                                              &[MERGEUP_FRAGMENT_SOURCE])?;
+        let fshader_upmergeup = compile_shader(&gl,"the upmergeup fragment \
+                                                    shader",
+                                               GL_FRAGMENT_SHADER,
+                                               &[UPMERGEUP_FRAGMENT_SOURCE])?;
         let fshader_downsample
             = compile_shader(&gl, "the downsample fragment shader",
                              GL_FRAGMENT_SHADER,
@@ -601,6 +621,8 @@ where F: FnMut() -> WindowBuilder
                                      &[vshader_blit, fshader_merge])?;
         program_mergeup = link_program(&gl, "the mergeup shader program",
                                        &[vshader_blit, fshader_mergeup])?;
+        program_upmergeup = link_program(&gl, "the upmergeup shader program",
+                                         &[vshader_blit, fshader_upmergeup])?;
         program_downsample = link_program(&gl, "the downsample program",
                                           &[vshader_blit, fshader_downsample])?;
         program_downsample_wm = link_program(&gl, "downsample with matrix",
@@ -616,24 +638,27 @@ where F: FnMut() -> WindowBuilder
         gl.DeleteShader(fshader_bwm);
         gl.DeleteShader(fshader_merge);
         gl.DeleteShader(fshader_mergeup);
+        gl.DeleteShader(fshader_upmergeup);
         gl.DeleteShader(fshader_bloomx);
         gl.DeleteShader(fshader_bloomy);
         gl.DeleteShader(fshader_downsample);
         gl.DeleteShader(fshader_downsample_wm);
         // Generate VAOs, VBOs, textures, and framebuffers
-        let mut vaos = [0; 4];
+        let mut vaos = [0; 5];
         gl.GenVertexArrays(vaos.len() as GLint, &mut vaos[0]);
         quad_vao = vaos[0];
         bloom_vao = vaos[1];
         ui_vao = vaos[2];
         world_ds_vao = vaos[3];
-        let mut vbos = [0; 5];
+        updog_vao = vaos[4];
+        let mut vbos = [0; 6];
         gl.GenBuffers(vbos.len() as GLint, &mut vbos[0]);
         quad_ib = vbos[0];
         quad_vb = vbos[1];
         bloom_vb = vbos[2];
         ui_vb = vbos[3];
         world_ds_vb = vbos[4];
+        updog_vb = vbos[5];
         let mut tex = [0; 8];
         gl.GenTextures(tex.len() as GLint, &mut tex[0]);
         world_tex = tex[0];
@@ -685,7 +710,8 @@ where F: FnMut() -> WindowBuilder
         ]);
         for &(vao, vb) in &[(bloom_vao, bloom_vb),
                             (ui_vao, ui_vb),
-                            (world_ds_vao, world_ds_vb)] {
+                            (world_ds_vao, world_ds_vb),
+                            (updog_vao, updog_vb)] {
             // Bloom and Blit-With-Matrix and Downsample and... stuff
             gl.BindVertexArray(vao);
             gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, quad_ib);
@@ -701,6 +727,15 @@ where F: FnMut() -> WindowBuilder
                                         transmute(8usize))),
             ]);
         }
+        let buf: [f32; 16] = [
+            -1.0, -1.0, 0.0, 0.0,
+            1.0, -1.0, 1.0, 0.0,
+            1.0, 1.0, 1.0, 1.0,
+            -1.0, 1.0, 0.0, 1.0,
+        ];
+        gl.BindBuffer(GL_ARRAY_BUFFER, updog_vb);
+        gl.BufferData(GL_ARRAY_BUFFER, 64, transmute(&buf[0]),
+                      GL_STATIC_DRAW);
         // Do linear-to-sRGB compression before writing to the framebuffer and
         // decompression after reading (for blending)
         gl.Enable(GL_FRAMEBUFFER_SRGB);
@@ -723,7 +758,7 @@ where F: FnMut() -> WindowBuilder
                  gl.Uniform1i(loc, 1)),
             ]);
         }
-        for &prog in &[program_merge, program_mergeup] {
+        for &prog in &[program_merge, program_mergeup, program_upmergeup] {
             setup_uniforms(&gl, prog, "merge", &[
                 (b"src1\0", &|gl, loc|
                  gl.Uniform1i(loc, 0)),
@@ -800,72 +835,8 @@ where F: FnMut() -> WindowBuilder
         else if max_sample_count >= 2 { max_multisample_power = 1 }
         else { max_multisample_power = 0 }
         assertgl(&gl, "initializing the context")?;
-        // Before we're done, check for Mesa bug #4613.
-        // We have to do this check, and otherwise assume multisampling is in
-        // use, in case somebody uses their vendor's special control panel to
-        // force multisampling to be used.
-        gl.ClearColor(0.0, 1.0, 0.0, 0.0);
-        gl.Clear(GL_COLOR_BUFFER_BIT);
-        gl.Disable(GL_MULTISAMPLE);
-        let mut testvao = 0;
-        gl.GenVertexArrays(1, &mut testvao);
-        gl.BindVertexArray(testvao);
-        let mut testvb = 0;
-        gl.GenBuffers(1, &mut testvb);
-        setup_model_attribs(&gl, program_model);
-        gl.BufferData(GL_ARRAY_BUFFER, 12 * 4,
-                      transmute(&MULTISAMPLE_COVERAGE_TEST_BATCH[0]),
-                      GL_STREAM_DRAW);
-        gl.DrawArrays(GL_TRIANGLES, 0, 3);
-        gl.Enable(GL_MULTISAMPLE);
-        let mut testfb = 0;
-        let mut testtex = 0;
-        gl.GenFramebuffers(1, &mut testfb);
-        gl.GenTextures(1, &mut testtex);
-        gl.BindTexture(GL_TEXTURE_2D, testtex);
-        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                         GL_NEAREST as GLint);
-        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
-                         GL_NEAREST as GLint);
-        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA as GLint, 1, 1, 0, GL_RGBA,
-                      GL_UNSIGNED_BYTE, transmute(b"aaaa"));
-        gl.BindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, testfb);
-        gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                GL_TEXTURE_2D, testtex, 0);
-        if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
-            != GL_FRAMEBUFFER_COMPLETE {
-                warn!("Couldn't set up framebuffer for multisample coverage \
-                       check. Assuming the bug is NOT PRESENT. Sorry if your \
-                       text all comes out dim.");
-                force_multisample = false;
-            }
-        else {
-            gl.BlitFramebuffer(0, 0, 1, 1, 0, 0, 1, 1, GL_COLOR_BUFFER_BIT,
-                               GL_NEAREST);
-            let mut buf = [0u8; 3];
-            gl.BindFramebuffer(GL_READ_FRAMEBUFFER, testfb);
-            gl.ReadPixels(0, 0, 1, 1, GL_RGB, GL_UNSIGNED_BYTE,
-                          transmute(&mut buf[0]));
-            gl.BindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-            gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-            force_multisample = if buf[0]==255 && buf[1]==0 && buf[2]==255 {
-                info!("Checked for multisample coverage quirk, didn't see it. \
-                       Great!");
-                false
-            }
-            else {
-                warn!("Your driver doesn't handle GL_MULTISAMPLE being \
-                       disabled correctly. We have no choice but to leave it \
-                       enabled. Performance of text rendering will suffer.");
-                true
-            };
-        }
-        gl.DeleteFramebuffers(1, &testfb);
-        gl.DeleteTextures(1, &testtex);
-        gl.DeleteBuffers(1, &testvb);
-        gl.DeleteVertexArrays(1, &testvao);
-        assertgl(&gl, "checking for the multisample bug")?;
+        // TODO: check for Mesa bug #4613.
+        force_multisample = false;
     }
     Ok(Box::new(OpenGL32 {
         window, ctx, gl, last_batch_type: LastBatchType::None, loc_bwm_mat,
@@ -881,6 +852,7 @@ where F: FnMut() -> WindowBuilder
         world_ds_tex, world_ds_w: 0, world_ds_h: 0, world_res_w: 0,
         world_res_h: 0, program_merge, world_ds_vb, ui_vb, program_downsample,
         program_downsample_wm, ui_vao, world_ds_vao, program_mergeup,
+        program_upmergeup, world_is_undersampled: false, updog_vao, updog_vb,
     }))
 }
 
@@ -888,7 +860,14 @@ impl Renderer for OpenGL32 {
     fn begin_rendering(&mut self, params: &RenderParams) -> anyhow::Result<()> {
         self.window.gl_make_current(&self.ctx)
             .map_err(|x| anyhow!("OpenGL context lost! {}", x))?;
-        let (w, h) = self.get_size();
+        let (win_w, win_h) = self.get_size();
+        let world_render_x = params.world_scale.x.min(1.0).max(1.0 / 32.0);
+        let world_render_y = params.world_scale.y.min(1.0).max(1.0 / 32.0);
+        let w = if world_render_x == 1.0 { win_w }
+        else { (win_w as f32 * world_render_x + 0.5).floor() as u32 };
+        let h = if world_render_y == 1.0 { win_h }
+        else { (win_h as f32 * world_render_y + 0.5).floor() as u32 };
+        self.world_is_undersampled = w != win_w || h != win_h;
         let num_samples = params.world_oversamples.min(5);
         let ms_bits = num_samples.min(self.max_multisample_power);
         let os_bits = num_samples - ms_bits;
@@ -1157,13 +1136,14 @@ impl Renderer for OpenGL32 {
         let ui_sample_bits = params.ui_oversamples.min(5)
             .min(self.max_multisample_power);
         let ui_samples = 1 << ui_sample_bits;
-        let ui_w = w;
-        let ui_h = h;
-        if self.ui_w != w || self.ui_h != h || self.ui_samples != ui_samples {
+        let ui_w = win_w;
+        let ui_h = win_h;
+        if self.ui_w != ui_w || self.ui_h != ui_h
+        || self.ui_samples != ui_samples {
             debug!("recreating UI framebuffer at {}x{}x{}",
                    ui_w, ui_h, ui_samples);
-            self.ui_w = w;
-            self.ui_h = h;
+            self.ui_w = ui_w;
+            self.ui_h = ui_h;
             self.ui_samples = ui_samples;
             if ui_samples == 1 {
                 debug!("  (using default framebuffer instead)");
@@ -1654,14 +1634,30 @@ impl OpenGL32 {
                     dst_fb = self.bloom_fb[0];
                 }
             }
-            gl.BindVertexArray(self.ui_vao);
             gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.which_ui_fb());
             gl.Viewport(0, 0, self.ui_w as GLint, self.ui_h as GLint);
-            if params.bloom_undersamples > 0 {
+            if self.world_is_undersampled {
                 if params.show_bloom_only {
-                    // TODO: blitup
                     gl.UseProgram(self.program_blit);
                     gl.BindTexture(GL_TEXTURE_2D, src_tex);
+                    gl.BindVertexArray(self.bloom_vao);
+                    gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
+                }
+                else {
+                    gl.UseProgram(self.program_upmergeup);
+                    gl.ActiveTexture(GL_TEXTURE1);
+                    gl.BindTexture(GL_TEXTURE_2D, src_tex);
+                    gl.ActiveTexture(GL_TEXTURE0);
+                    gl.BindTexture(GL_TEXTURE_2D, world_src_tex);
+                    gl.BindVertexArray(self.updog_vao);
+                    gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null())
+                }
+            }
+            else if params.bloom_undersamples > 0 {
+                if params.show_bloom_only {
+                    gl.UseProgram(self.program_blit);
+                    gl.BindTexture(GL_TEXTURE_2D, src_tex);
+                    gl.BindVertexArray(self.bloom_vao);
                     gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
                 }
                 else {
@@ -1677,6 +1673,7 @@ impl OpenGL32 {
                     gl.BindTexture(GL_TEXTURE_2D, src_tex);
                     gl.ActiveTexture(GL_TEXTURE0);
                     gl.BindTexture(GL_TEXTURE_2D, world_src_tex);
+                    gl.BindVertexArray(self.ui_vao);
                     gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
                 }
             }
@@ -1684,6 +1681,7 @@ impl OpenGL32 {
                 if params.show_bloom_only {
                     gl.UseProgram(self.program_blit);
                     gl.BindTexture(GL_TEXTURE_2D, src_tex);
+                    gl.BindVertexArray(self.bloom_vao);
                     gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
                 }
                 else {
@@ -1692,6 +1690,7 @@ impl OpenGL32 {
                     gl.BindTexture(GL_TEXTURE_2D, src_tex);
                     gl.ActiveTexture(GL_TEXTURE0);
                     gl.BindTexture(GL_TEXTURE_2D, world_src_tex);
+                    gl.BindVertexArray(self.ui_vao);
                     gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
                 }
             }

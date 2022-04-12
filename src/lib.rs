@@ -97,6 +97,12 @@ pub struct RenderParams {
     /// If bloom is enabled, this controls whether to draw only the bloom to
     /// the screen. (Good for tweaking how bloom affects your scene, I guess.)
     pub show_bloom_only: bool,
+    /// If the given dimension of this vector is less than one, render at a
+    /// lower resolution on that axis. e.g. {0.5, 0.25} will render half
+    /// resolution horizontally, one quarter resolution vertically.
+    ///
+    /// Default is, naturally, {1.0, 1.0}.
+    pub world_scale: Vector,
 }
 
 impl Default for RenderParams {
@@ -121,6 +127,7 @@ impl Default for RenderParams {
                 0.0, 0.0, 0.0,
             ],
             show_bloom_only: false,
+            world_scale: Vector::new(1.0, 1.0),
         }
     }
 }
