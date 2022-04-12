@@ -341,8 +341,25 @@ extern "C" fn debug_callback(source: GLenum, typ: GLenum, id: GLuint,
     }
 }
 
-fn compile_shader(gl: &Procs, wat: &str, typ: GLenum, texts: &[&[u8]])
-    -> anyhow::Result<GLuint> {
+struct CompiledShader<'a>(GLuint, &'a Procs);
+
+impl Deref for CompiledShader<'_> {
+    type Target = GLuint;
+    fn deref(&self) -> &GLuint {
+        &self.0
+    }
+}
+
+impl Drop for CompiledShader<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            self.1.DeleteShader(self.0)
+        }
+    }
+}
+
+fn compile_shader<'a>(gl: &'a Procs, wat: &str, typ: GLenum, texts: &[&[u8]])
+    -> anyhow::Result<CompiledShader<'a>> {
     const SHADER_VERSION_SUPPLEMENT: &[u8] = br#"
 #version 140
 "#;
@@ -387,7 +404,7 @@ fn compile_shader(gl: &Procs, wat: &str, typ: GLenum, texts: &[&[u8]])
                   String::from_utf8_lossy(&info_log[..info_log.len()-1]));
         }
         assertgl(gl, "compiling a shader").unwrap();
-        Ok(shader)
+        Ok(CompiledShader(shader, &gl))
     }
 }
 
@@ -606,43 +623,27 @@ where F: FnMut() -> WindowBuilder
                              &[WITH_MATRIX_SUPPLEMENT,
                                DOWNSAMPLE_FRAGMENT_SOURCE])?;
         program_model = link_program(&gl, "the model shader program",
-                                     &[vshader_model, fshader_model])?;
+                                     &[*vshader_model, *fshader_model])?;
         program_text = link_program(&gl, "the text shader program",
-                                    &[vshader_text, fshader_text])?;
+                                    &[*vshader_text, *fshader_text])?;
         program_blit = link_program(&gl, "the blit shader program",
-                                    &[vshader_blit, fshader_blit])?;
+                                    &[*vshader_blit, *fshader_blit])?;
         program_bwm = link_program(&gl, "the blit-w-mat shader program",
-                                    &[vshader_blit, fshader_bwm])?;
+                                    &[*vshader_blit, *fshader_bwm])?;
         program_bloomx = link_program(&gl, "the bloom-x shader program",
-                                      &[vshader_blit, fshader_bloomx])?;
+                                      &[*vshader_blit, *fshader_bloomx])?;
         program_bloomy = link_program(&gl, "the bloom-y shader program",
-                                      &[vshader_blit, fshader_bloomy])?;
+                                      &[*vshader_blit, *fshader_bloomy])?;
         program_merge = link_program(&gl, "the merge shader program",
-                                     &[vshader_blit, fshader_merge])?;
+                                     &[*vshader_blit, *fshader_merge])?;
         program_mergeup = link_program(&gl, "the mergeup shader program",
-                                       &[vshader_blit, fshader_mergeup])?;
+                                       &[*vshader_blit, *fshader_mergeup])?;
         program_upmergeup = link_program(&gl, "the upmergeup shader program",
-                                         &[vshader_blit, fshader_upmergeup])?;
+                                         &[*vshader_blit, *fshader_upmergeup])?;
         program_downsample = link_program(&gl, "the downsample program",
-                                          &[vshader_blit, fshader_downsample])?;
+                                          &[*vshader_blit, *fshader_downsample])?;
         program_downsample_wm = link_program(&gl, "downsample with matrix",
-                                             &[vshader_blit, fshader_downsample_wm])?;
-        
-        // TODO: rustify this crap
-        gl.DeleteShader(vshader_model);
-        gl.DeleteShader(fshader_model);
-        gl.DeleteShader(vshader_text);
-        gl.DeleteShader(fshader_text);
-        gl.DeleteShader(vshader_blit);
-        gl.DeleteShader(fshader_blit);
-        gl.DeleteShader(fshader_bwm);
-        gl.DeleteShader(fshader_merge);
-        gl.DeleteShader(fshader_mergeup);
-        gl.DeleteShader(fshader_upmergeup);
-        gl.DeleteShader(fshader_bloomx);
-        gl.DeleteShader(fshader_bloomy);
-        gl.DeleteShader(fshader_downsample);
-        gl.DeleteShader(fshader_downsample_wm);
+                                             &[*vshader_blit, *fshader_downsample_wm])?;
         // Generate VAOs, VBOs, textures, and framebuffers
         let mut vaos = [0; 5];
         gl.GenVertexArrays(vaos.len() as GLint, &mut vaos[0]);
