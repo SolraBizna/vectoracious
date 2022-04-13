@@ -141,7 +141,6 @@ struct OpenGL32 {
     /// this VAO has normalized texture coordinates, instead of depending on
     /// the size
     updog_vao: GLuint,
-    updog_vb: GLuint,
     model_cache: ModelCache,
     loc_transform: GLint,
     loc_opacity: GLint,
@@ -560,8 +559,7 @@ where F: FnMut() -> WindowBuilder
          gauss_tex, bloom_vao, bloom_vb, loc_bwm_mat, world_res_tex,
          world_res_fb, world_ds_tex, world_ds_fb, program_merge, ui_vb,
          world_ds_vb, program_downsample, program_downsample_wm, ui_vao,
-         world_ds_vao, program_mergeup, program_upmergeup, updog_vao,
-         updog_vb);
+         world_ds_vao, program_mergeup, program_upmergeup, updog_vao);
     unsafe {
         // If we have the appropriate extension, let's make the debug messages
         // FLY!
@@ -659,7 +657,7 @@ where F: FnMut() -> WindowBuilder
         bloom_vb = vbos[2];
         ui_vb = vbos[3];
         world_ds_vb = vbos[4];
-        updog_vb = vbos[5];
+        let updog_vb = vbos[5];
         let mut tex = [0; 8];
         gl.GenTextures(tex.len() as GLint, &mut tex[0]);
         world_tex = tex[0];
@@ -768,11 +766,9 @@ where F: FnMut() -> WindowBuilder
             ]);
         }
         gl.UseProgram(program_text);
-        let loc = gl.GetUniformLocation(program_text,
-                                        transmute(b"atlas\0"));
-        if loc >= 0 {
-            gl.Uniform1i(loc, 0); // texture unit 0
-        }
+        setup_uniforms(&gl, program_text, "text", &[
+            (b"atlas\0", &|gl, loc| gl.Uniform1i(loc, 0)),
+        ]);
         gl.UseProgram(program_model);
         loc_transform = gl.GetUniformLocation(program_model,
                                               transmute(b"transform\0"));
@@ -836,8 +832,8 @@ where F: FnMut() -> WindowBuilder
         else if max_sample_count >= 2 { max_multisample_power = 1 }
         else { max_multisample_power = 0 }
         assertgl(&gl, "initializing the context")?;
-        // TODO: check for Mesa bug #4613.
-        force_multisample = false;
+        force_multisample = if max_multisample_power <= 0 { false }
+        else { check_multisample_bug(&gl, program_model)? };
     }
     Ok(Box::new(OpenGL32 {
         window, ctx, gl, last_batch_type: LastBatchType::None, loc_bwm_mat,
@@ -853,7 +849,7 @@ where F: FnMut() -> WindowBuilder
         world_ds_tex, world_ds_w: 0, world_ds_h: 0, world_res_w: 0,
         world_res_h: 0, program_merge, world_ds_vb, ui_vb, program_downsample,
         program_downsample_wm, ui_vao, world_ds_vao, program_mergeup,
-        program_upmergeup, world_is_undersampled: false, updog_vao, updog_vb,
+        program_upmergeup, world_is_undersampled: false, updog_vao,
     }))
 }
 
@@ -1695,6 +1691,90 @@ impl OpenGL32 {
                     gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
                 }
             }
+        }
+    }
+}
+
+fn check_multisample_bug(gl: &Procs, program_model: GLuint)
+    -> anyhow::Result<bool> {
+    // Check for Mesa bug #4613.
+    let mut fbs = [0; 2];
+    let mut texs = [0; 2];
+    let mut vbs = [0; 1];
+    unsafe {
+        // don't bind to any existing vertex array
+        gl.BindVertexArray(0);
+        // generate framebuffers, textures, VBO
+        gl.GenFramebuffers(fbs.len() as GLint, &mut fbs[0]);
+        gl.GenTextures(texs.len() as GLint, &mut texs[0]);
+        gl.GenBuffers(vbs.len() as GLint, &mut vbs[0]);
+        // framebuffer 0: multisampled
+        gl.BindTexture(GL_TEXTURE_2D_MULTISAMPLE, texs[0]);
+        gl.TexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 2, GL_RGBA16F,
+                                 16, 16, 0);
+        assertgl(gl, "creating multisampled float texture")?;
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbs[0]);
+        gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                GL_TEXTURE_2D_MULTISAMPLE, texs[0], 0);
+        assertgl(gl, "creating multisampled framebuffer")?;
+        if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
+        != GL_FRAMEBUFFER_COMPLETE {
+            return Err(anyhow!("multisample test framebuffer wasn't complete, \
+                                but had no errors?!"))
+        }
+        // framebuffer 1: ...unisampled?
+        gl.BindTexture(GL_TEXTURE_2D, texs[1]);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F as GLint, 16, 16, 0,
+                      GL_RGBA, GL_FLOAT, null());
+        assertgl(gl, "creating unisampled float texture")?;
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbs[1]);
+        gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                GL_TEXTURE_2D, texs[1], 0);
+        assertgl(gl, "creating unisampled framebuffer")?;
+        if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
+        != GL_FRAMEBUFFER_COMPLETE {
+            return Err(anyhow!("multisample test framebuffer wasn't complete, \
+                                but had no errors?!"))
+        }
+        // bind framebuffer 0, draw the thing
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbs[0]);
+        gl.Viewport(0, 0, 16, 16);
+        gl.BindBuffer(GL_ARRAY_BUFFER, vbs[0]);
+        gl.BufferData(GL_ARRAY_BUFFER, 36,
+                      transmute(&MULTISAMPLE_COVERAGE_TEST_BATCH[0]),
+                      GL_STATIC_DRAW);
+        gl.UseProgram(program_model);
+        setup_model_attribs(gl, program_model);
+        // clear with green, draw with magenta
+        gl.Disable(GL_MULTISAMPLE);
+        gl.Clear(GL_COLOR_BUFFER_BIT);
+        gl.ClearColor(0.0, 1.0, 0.0, 0.0);
+        gl.DrawArrays(GL_TRIANGLES, 0, 3);
+        gl.Enable(GL_MULTISAMPLE);
+        // blit across
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbs[1]);
+        gl.BindFramebuffer(GL_READ_FRAMEBUFFER, fbs[0]);
+        gl.BlitFramebuffer(0, 0, 16, 16, 0, 0, 16, 16,
+                           GL_COLOR_BUFFER_BIT, GL_NEAREST);
+        // grab the lower left pixel
+        gl.BindFramebuffer(GL_READ_FRAMEBUFFER, fbs[1]);
+        let mut buf = [0.0f32; 3];
+        gl.ReadPixels(0, 0, 1, 1, GL_RGB, GL_FLOAT, transmute(&mut buf[0]));
+        // clean up
+        gl.DeleteFramebuffers(fbs.len() as GLint, &mut fbs[0]);
+        gl.DeleteTextures(texs.len() as GLint, &mut texs[0]);
+        gl.DeleteBuffers(vbs.len() as GLint, &mut vbs[0]);
+        // correct answer is 1.0, 0.0, 1.0
+        if &buf == &[1.0, 0.0, 1.0] {
+            debug!("Didn't find Mesa bug #4613. Nice.");
+            Ok(false)
+        }
+        else {
+            warn!("Your video driver doesn't correctly support \
+                   non-multisampled rendering into a multisampled \
+                   framebuffer. Enabling a workaround, but performance will \
+                   suffer.");
+            Ok(true)
         }
     }
 }

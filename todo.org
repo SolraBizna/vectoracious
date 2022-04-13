@@ -9,7 +9,7 @@
 * DONE bloom undersampling
 * DONE world oversampling
 * DONE world undersampling
-* TODO make the multisample test work again
+* DONE make the multisample test work again
 * TODO test if GL_LINEAR framebuffer blits work correctly for 2x/4x downsample
 * DONE "show bloom only" mode?
 * DONE eliminate 16-bit float usage from Color
