@@ -130,6 +130,7 @@ struct OpenGL32 {
     program_downsample_wm: GLuint,
     bound_texture: Option<GLuint>,
     force_multisample: bool,
+    can_downsample_with_blit: bool,
     quad_vao: GLuint,
     quad_vb: GLuint,
     bloom_vao: GLuint,
@@ -216,12 +217,6 @@ const BUF_SIZE: usize = 262144; // 256KiB at a time
 const QUAD_IB_COUNT: usize = BUF_SIZE / (size_of::<MergedTextVert>()*4);
 /// Number of bytes to make our IBO
 const QUAD_IB_SIZE: usize = QUAD_IB_COUNT * 6 * 2;
-
-const MULTISAMPLE_COVERAGE_TEST_BATCH: &[ModelVert] = &[
-    ModelVert { x: -1.0, y: -1.0, c: 0 },
-    ModelVert { x:  1.0, y: -1.0, c: 0 },
-    ModelVert { x: -1.0, y:  1.0, c: 0 },
-];
 
 const MODEL_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/model.frag");
 const MODEL_VERTEX_SOURCE: &[u8] = include_bytes!("gl32/model.vert");
@@ -557,7 +552,8 @@ where F: FnMut() -> WindowBuilder
          gauss_tex, bloom_vao, bloom_vb, loc_bwm_mat, world_res_tex,
          world_res_fb, world_ds_tex, world_ds_fb, program_merge, ui_vb,
          world_ds_vb, program_downsample, program_downsample_wm, ui_vao,
-         world_ds_vao, program_mergeup, program_upmergeup, updog_vao);
+         world_ds_vao, program_mergeup, program_upmergeup, updog_vao,
+         can_downsample_with_blit);
     unsafe {
         // If we have the appropriate extension, let's make the debug messages
         // FLY!
@@ -837,6 +833,8 @@ where F: FnMut() -> WindowBuilder
         assertgl(&gl, "initializing the context")?;
         force_multisample = if max_multisample_power <= 0 { false }
         else { check_multisample_bug(&gl, program_model)? };
+        can_downsample_with_blit
+            = check_downsample_with_blit(&gl, program_blit)?;
     }
     Ok(Box::new(OpenGL32 {
         window, ctx, gl, last_batch_type: LastBatchType::None, loc_bwm_mat,
@@ -853,6 +851,7 @@ where F: FnMut() -> WindowBuilder
         world_res_h: 0, program_merge, world_ds_vb, ui_vb, program_downsample,
         program_downsample_wm, ui_vao, world_ds_vao, program_mergeup,
         program_upmergeup, world_is_undersampled: false, updog_vao,
+        can_downsample_with_blit,
     }))
 }
 
@@ -1480,7 +1479,7 @@ impl OpenGL32 {
                 gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,
                                    self.which_ui_fb());
                 gl.Viewport(0, 0, self.ui_w as GLint, self.ui_h as GLint);
-                let filter = if self.world_super_x > 1 || self.world_super_y > 1 { GL_LINEAR } else { GL_NEAREST };
+                let filter = if self.can_downsample_with_blit && (self.world_super_x > 1 || self.world_super_y > 1) { GL_LINEAR } else { GL_NEAREST };
                 // ;)
                 gl.BlitFramebuffer(0, 0, self.world_w as i32,
                                    self.world_h as i32,
@@ -1698,9 +1697,16 @@ impl OpenGL32 {
     }
 }
 
+/// Tests for Mesa bug #4613. `true` = affected by the bug, can't ever disable
+/// `GL_MULTISAMPLE`. `false` = unaffected, can disable `GL_MULTISAMPLE` when
+/// doing a shader that doesn't benefit from it.
 fn check_multisample_bug(gl: &Procs, program_model: GLuint)
     -> anyhow::Result<bool> {
-    // Check for Mesa bug #4613.
+    const MULTISAMPLE_COVERAGE_TEST_BATCH: &[ModelVert] = &[
+        ModelVert { x: -1.0, y: -1.0, c: 0 },
+        ModelVert { x:  1.0, y: -1.0, c: 0 },
+        ModelVert { x: -1.0, y:  1.0, c: 0 },
+    ];
     let mut fbs = [0; 2];
     let mut texs = [0; 2];
     let mut vbs = [0; 1];
@@ -1776,7 +1782,121 @@ fn check_multisample_bug(gl: &Procs, program_model: GLuint)
             warn!("Your video driver doesn't correctly support \
                    non-multisampled rendering into a multisampled \
                    framebuffer. Enabling a workaround, but performance will \
-                   suffer.");
+                   suffer slightly.");
+            Ok(true)
+        }
+    }
+}
+
+/// Tests whether `gl.BlitFramebuffer(..., GL_LINEAR)` can be used to do 2x or
+/// 4x downsampling. This is preferred, when possible, because it uses a fixed-
+/// function part of the video pipeline that is often going to be faster than
+/// our generic downsample shader.
+fn check_downsample_with_blit(gl: &Procs, program_blit: GLuint)
+    -> anyhow::Result<bool> {
+    const SOURCE_TEXTURE: [f32; 12] = [
+        1.0, 0.0, 0.0,
+        0.0, 0.5, 0.0,
+        0.0, 0.0, 0.25,
+        0.0, 0.5, 0.25,
+    ];
+    const TEST_BATCH: [f32; 24] = [
+        -1.0, -1.0, 0.0, 0.0,
+         1.0, -1.0, 2.0, 0.0,
+         1.0,  1.0, 2.0, 2.0,
+         1.0,  1.0, 2.0, 2.0,
+        -1.0,  1.0, 0.0, 2.0,
+        -1.0, -1.0, 0.0, 0.0,
+    ];
+    let mut fbs = [0; 2];
+    let mut texs = [0; 3];
+    let mut vbs = [0; 1];
+    unsafe {
+        // don't bind to any existing vertex array
+        gl.BindVertexArray(0);
+        // generate framebuffers, textures, VBO
+        gl.GenFramebuffers(fbs.len() as GLint, &mut fbs[0]);
+        gl.GenTextures(texs.len() as GLint, &mut texs[0]);
+        gl.GenBuffers(vbs.len() as GLint, &mut vbs[0]);
+        // framebuffer 0: unisampled 2x2
+        gl.BindTexture(GL_TEXTURE_2D, texs[0]);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F as GLint, 2, 2, 0,
+                      GL_RGBA, GL_FLOAT, null());
+        assertgl(gl, "creating unisampled float texture")?;
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbs[0]);
+        gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                GL_TEXTURE_2D, texs[0], 0);
+        assertgl(gl, "creating unisampled framebuffer")?;
+        if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
+        != GL_FRAMEBUFFER_COMPLETE {
+            return Err(anyhow!("downsample test framebuffer wasn't complete, \
+                                but had no errors?!"))
+        }
+        // framebuffer 1: unisampled 1x1
+        gl.BindTexture(GL_TEXTURE_2D, texs[1]);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F as GLint, 1, 1, 0,
+                      GL_RGBA, GL_FLOAT, null());
+        assertgl(gl, "creating unisampled float texture")?;
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbs[1]);
+        gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                GL_TEXTURE_2D, texs[1], 0);
+        assertgl(gl, "creating unisampled framebuffer")?;
+        if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
+        != GL_FRAMEBUFFER_COMPLETE {
+            return Err(anyhow!("downsample test framebuffer wasn't complete, \
+                                but had no errors?!"))
+        }
+        // the test texture
+        gl.BindTexture(GL_TEXTURE_2D, texs[2]);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F as GLint, 2, 2, 0,
+                      GL_RGB, GL_FLOAT, transmute(&SOURCE_TEXTURE[0]));
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                         GL_LINEAR as GLint);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                         GL_LINEAR as GLint);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+                         GL_CLAMP_TO_EDGE as GLint);
+        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+                         GL_CLAMP_TO_EDGE as GLint);
+        // bind framebuffer 0, draw the thing
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbs[0]);
+        gl.Viewport(0, 0, 2, 2);
+        gl.BindBuffer(GL_ARRAY_BUFFER, vbs[0]);
+        gl.BufferData(GL_ARRAY_BUFFER, 96,
+                      transmute(&TEST_BATCH[0]),
+                      GL_STATIC_DRAW);
+        gl.UseProgram(program_blit);
+        setup_attribs(&gl, program_blit, "blit", &[
+            (b"pos\0", &|gl, loc|
+             gl.VertexAttribPointer(loc, 2, GL_FLOAT, 0, 16,
+                                    transmute(0usize))),
+            (b"uv_in\0", &|gl, loc|
+             gl.VertexAttribPointer(loc, 2, GL_FLOAT, 0, 16,
+                                    transmute(8usize))),
+        ]);
+        gl.DrawArrays(GL_TRIANGLES, 0, 6);
+        // blit down
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbs[1]);
+        gl.BindFramebuffer(GL_READ_FRAMEBUFFER, fbs[0]);
+        gl.BlitFramebuffer(0, 0, 2, 2, 0, 0, 1, 1,
+                           GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        // grab the pixel
+        gl.BindFramebuffer(GL_READ_FRAMEBUFFER, fbs[1]);
+        let mut buf = [0.0f32; 3];
+        gl.ReadPixels(0, 0, 1, 1, GL_RGB, GL_FLOAT, transmute(&mut buf[0]));
+        // clean up
+        gl.DeleteFramebuffers(fbs.len() as GLint, &mut fbs[0]);
+        gl.DeleteTextures(texs.len() as GLint, &mut texs[0]);
+        gl.DeleteBuffers(vbs.len() as GLint, &mut vbs[0]);
+        // correct answer is 0.25, 0.25, 0.125
+        if &buf == &[0.25, 0.25, 0.125] {
+            debug!("Downsampling with BlitFramebuffer is accurate. Nice.");
+            Ok(false)
+        }
+        else {
+            warn!("Your video driver doesn't correctly support downsampling \
+                   via BlitFramebuffer. Performance will suffer slightly.");
+            warn!("{:?}", buf);
             Ok(true)
         }
     }
