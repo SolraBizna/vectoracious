@@ -521,8 +521,6 @@ where F: FnMut() -> WindowBuilder
                              context: {}", x))?;
         },
     };
-    let (w, h) = window.size();
-    debug!("Window dimensions: {}x{}", w, h);
     let ctx = window.gl_create_context()
         .map_err(|x|anyhow!("Unable to create OpenGL 3.0 context: {}",x))?;
     window.gl_make_current(&ctx)
