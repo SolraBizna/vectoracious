@@ -562,12 +562,17 @@ where F: FnMut() -> WindowBuilder
         // If we have the appropriate extension, let's make the debug messages
         // FLY!
         if gl.has_ARB_debug_output {
-            info!("ARB_debug_output extension is present. OpenGL errors will \
-                   be detected promptly.");
-            gl.Enable(0x92E0);
+            debug!("ARB_debug_output extension is present. OpenGL errors will \
+                    be detected promptly.");
+            gl.Enable(0x92E0); // Mesa bug workaround
             gl.GetError(); // ?!
+            #[cfg(debug_assertions)]
             gl.Enable(GL_DEBUG_OUTPUT_SYNCHRONOUS_ARB);
             gl.DebugMessageCallbackARB(Some(debug_callback), null());
+        }
+        else {
+            info!("ARB_debug_output extension is missing. OpenGL errors may \
+                   not be detected promptly.");
         }
         // Compile and link the shaders... oh boy.
         let fshader_model = compile_shader(&gl, "the model fragment shader",
