@@ -577,6 +577,11 @@ where F: FnMut() -> WindowBuilder
          updog_vao, can_downsample_with_blit, world_final_vao, world_final_vb,
          program_bwm_smooth);
     unsafe {
+        for _ in 0 .. 5 { // grumble grumble
+            gl.ClearColor(0.25, 0.25, 0.25, 1.0);
+            gl.Clear(GL_COLOR_BUFFER_BIT);
+            window.gl_swap_window();
+        }
         // If we have the appropriate extension, let's make the debug messages
         // FLY!
         if gl.has_ARB_debug_output {
