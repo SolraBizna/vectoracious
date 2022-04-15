@@ -2069,6 +2069,7 @@ fn check_multisample_bug(gl: &Procs, program_model: GLuint)
                    non-multisampled rendering into a multisampled \
                    framebuffer. Enabling a workaround, but performance will \
                    suffer slightly.");
+            trace!("answer given was: {:?}", buf);
             Ok(true)
         }
     }
@@ -2189,7 +2190,7 @@ fn check_downsample_with_blit(gl: &Procs, program_blit: GLuint)
         else {
             warn!("Your video driver doesn't correctly support downsampling \
                    via BlitFramebuffer. Performance will suffer slightly.");
-            warn!("{:?}", buf);
+            trace!("answer given was: {:?}", buf);
             Ok(true)
         }
     }
@@ -2261,7 +2262,7 @@ fn check_blit_delinearization(gl: &Procs)
         else {
             warn!("Your video driver doesn't support sRGB conversion in \
                    BlitFramebuffer. Performance will suffer slightly.");
-            warn!("{:?}", buf);
+            trace!("answer given was: {:?}", buf);
             Ok(true)
         }
     }
