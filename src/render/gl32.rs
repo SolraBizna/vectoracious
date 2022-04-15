@@ -1889,13 +1889,14 @@ fn check_multisample_bug(gl: &Procs, program_model: GLuint)
     let mut fbs = [0; 2];
     let mut texs = [0; 2];
     let mut vbs = [0; 1];
+    let mut vaos = [0; 1];
     unsafe {
-        // don't bind to any existing vertex array
-        gl.BindVertexArray(0);
-        // generate framebuffers, textures, VBO
+        // generate framebuffers, textures, VBO, VAO
         gl.GenFramebuffers(fbs.len() as GLint, &mut fbs[0]);
         gl.GenTextures(texs.len() as GLint, &mut texs[0]);
         gl.GenBuffers(vbs.len() as GLint, &mut vbs[0]);
+        gl.GenVertexArrays(vaos.len() as GLint, &mut vaos[0]);
+        gl.BindVertexArray(vaos[0]);
         // framebuffer 0: multisampled
         gl.BindTexture(GL_TEXTURE_2D_MULTISAMPLE, texs[0]);
         gl.TexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, 2, GL_RGBA16F,
@@ -1952,6 +1953,7 @@ fn check_multisample_bug(gl: &Procs, program_model: GLuint)
         gl.DeleteFramebuffers(fbs.len() as GLint, &mut fbs[0]);
         gl.DeleteTextures(texs.len() as GLint, &mut texs[0]);
         gl.DeleteBuffers(vbs.len() as GLint, &mut vbs[0]);
+        gl.DeleteVertexArrays(vaos.len() as GLint, &mut vaos[0]);
         assertgl(gl, "checking for the multisample bug")?;
         // correct answer is 1.0, 0.0, 1.0
         if &buf == &[1.0, 0.0, 1.0] {
@@ -1991,13 +1993,14 @@ fn check_downsample_with_blit(gl: &Procs, program_blit: GLuint)
     let mut fbs = [0; 2];
     let mut texs = [0; 3];
     let mut vbs = [0; 1];
+    let mut vaos = [0; 1];
     unsafe {
-        // don't bind to any existing vertex array
-        gl.BindVertexArray(0);
         // generate framebuffers, textures, VBO
         gl.GenFramebuffers(fbs.len() as GLint, &mut fbs[0]);
         gl.GenTextures(texs.len() as GLint, &mut texs[0]);
         gl.GenBuffers(vbs.len() as GLint, &mut vbs[0]);
+        gl.GenVertexArrays(vaos.len() as GLint, &mut vaos[0]);
+        gl.BindVertexArray(vaos[0]);
         // framebuffer 0: unisampled 2x2
         gl.BindTexture(GL_TEXTURE_2D, texs[0]);
         gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F as GLint, 2, 2, 0,
@@ -2068,6 +2071,7 @@ fn check_downsample_with_blit(gl: &Procs, program_blit: GLuint)
         gl.DeleteFramebuffers(fbs.len() as GLint, &mut fbs[0]);
         gl.DeleteTextures(texs.len() as GLint, &mut texs[0]);
         gl.DeleteBuffers(vbs.len() as GLint, &mut vbs[0]);
+        gl.DeleteVertexArrays(vaos.len() as GLint, &mut vaos[0]);
         assertgl(gl, "checking for the linear framebuffer blit optimization")?;
         // correct answer is 0.25, 0.25, 0.125
         if &buf == &[0.25, 0.25, 0.125] {
