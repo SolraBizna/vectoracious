@@ -2257,13 +2257,13 @@ fn check_blit_delinearization(gl: &Procs)
         assertgl(gl, "checking for BlitFramebuffer sRGB conversion")?;
         if buf[3] >= 0.49 && buf[3] <= 0.51 && buf[0] > 0.7 {
             debug!("We can use BlitFramebuffer to do sRGB conversion. Nice.");
-            Ok(false)
+            Ok(true)
         }
         else {
             warn!("Your video driver doesn't support sRGB conversion in \
                    BlitFramebuffer. Performance will suffer slightly.");
             trace!("answer given was: {:?}", buf);
-            Ok(true)
+            Ok(false)
         }
     }
 }
