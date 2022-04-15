@@ -144,6 +144,7 @@ struct OpenGL32 {
     bound_texture: Option<GLuint>,
     force_multisample: bool,
     can_downsample_with_blit: bool,
+    can_delinearize_with_blitframebuffer: bool,
     quad_vao: GLuint,
     quad_vb: GLuint,
     bloom_vao: GLuint,
@@ -575,7 +576,7 @@ where F: FnMut() -> WindowBuilder
          program_downsample_wm, ui_vao, world_ds_vao, program_mergeup,
          program_mergeup_wm, program_upmergeup, program_upmergeup_wm,
          updog_vao, can_downsample_with_blit, world_final_vao, world_final_vb,
-         program_bwm_smooth);
+         program_bwm_smooth, can_delinearize_with_blitframebuffer);
     unsafe {
         for _ in 0 .. 5 { // grumble grumble
             gl.ClearColor(0.25, 0.25, 0.25, 1.0);
@@ -904,6 +905,9 @@ where F: FnMut() -> WindowBuilder
         else { check_multisample_bug(&gl, program_model)? };
         can_downsample_with_blit
             = check_downsample_with_blit(&gl, program_blit)?;
+        can_delinearize_with_blitframebuffer
+            = check_blit_delinearization(&gl)?;
+        // TODO: use result of check
     }
     Ok(Box::new(OpenGL32 {
         window, ctx, gl, last_batch_type: LastBatchType::None,
@@ -923,6 +927,7 @@ where F: FnMut() -> WindowBuilder
         can_downsample_with_blit, program_merge_wm, program_mergeup_wm,
         program_upmergeup_wm, world_final_vao, world_final_vb,
         world_final_w: 0, world_final_h: 0, program_bwm_smooth,
+        can_delinearize_with_blitframebuffer,
     }))
 }
 
@@ -2086,6 +2091,74 @@ fn check_downsample_with_blit(gl: &Procs, program_blit: GLuint)
         else {
             warn!("Your video driver doesn't correctly support downsampling \
                    via BlitFramebuffer. Performance will suffer slightly.");
+            warn!("{:?}", buf);
+            Ok(true)
+        }
+    }
+}
+
+/// Tests whether `gl.BlitFramebuffer(...)` can be used to blit from a linear
+/// framebuffer to an sRGB framebuffer without screwups.
+fn check_blit_delinearization(gl: &Procs)
+    -> anyhow::Result<bool> {
+    let mut fbs = [0; 2];
+    let mut texs = [0; 3];
+    unsafe {
+        // generate framebuffers, textures, VBO
+        gl.GenFramebuffers(fbs.len() as GLint, &mut fbs[0]);
+        gl.GenTextures(texs.len() as GLint, &mut texs[0]);
+        // framebuffer 0: unisampled 1x1, linear
+        gl.BindTexture(GL_TEXTURE_2D, texs[0]);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F as GLint, 1, 1, 0,
+                      GL_RGBA, GL_FLOAT, null());
+        assertgl(gl, "creating unisampled float texture")?;
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbs[0]);
+        gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                GL_TEXTURE_2D, texs[0], 0);
+        assertgl(gl, "creating unisampled framebuffer")?;
+        if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
+        != GL_FRAMEBUFFER_COMPLETE {
+            return Err(anyhow!("downsample test framebuffer wasn't complete, \
+                                but had no errors?!"))
+        }
+        // framebuffer 1: unisampled 1x1, 32-bit
+        gl.BindTexture(GL_TEXTURE_2D, texs[1]);
+        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_SRGB8_ALPHA8 as GLint, 1, 1, 0,
+                      GL_RGBA, GL_UNSIGNED_BYTE, null());
+        assertgl(gl, "creating unisampled 32-bit texture")?;
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbs[1]);
+        gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                GL_TEXTURE_2D, texs[1], 0);
+        assertgl(gl, "creating unisampled framebuffer")?;
+        if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
+        != GL_FRAMEBUFFER_COMPLETE {
+            return Err(anyhow!("downsample test framebuffer wasn't complete, \
+                                but had no errors?!"))
+        }
+        // bind framebuffer 0, draw the thing
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbs[0]);
+        gl.ClearColor(0.5, 0.5, 0.5, 0.5);
+        gl.Clear(GL_COLOR_BUFFER_BIT);
+        // blit down
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, fbs[1]);
+        gl.BindFramebuffer(GL_READ_FRAMEBUFFER, fbs[0]);
+        gl.BlitFramebuffer(0, 0, 2, 2, 0, 0, 1, 1,
+                           GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        // grab the pixel
+        gl.BindFramebuffer(GL_READ_FRAMEBUFFER, fbs[1]);
+        let mut buf = [0.0f32; 4];
+        gl.ReadPixels(0, 0, 1, 1, GL_RGBA, GL_FLOAT, transmute(&mut buf[0]));
+        // clean up
+        gl.DeleteFramebuffers(fbs.len() as GLint, &mut fbs[0]);
+        gl.DeleteTextures(texs.len() as GLint, &mut texs[0]);
+        assertgl(gl, "checking for BlitFramebuffer sRGB conversion")?;
+        if buf[3] >= 0.49 && buf[3] <= 0.51 && buf[0] < 0.3 {
+            debug!("We can use BlitFramebuffer to do sRGB conversion. Nice.");
+            Ok(false)
+        }
+        else {
+            warn!("Your video driver doesn't support sRGB conversion in \
+                   BlitFramebuffer. Performance will suffer slightly.");
             warn!("{:?}", buf);
             Ok(true)
         }
