@@ -931,7 +931,6 @@ where F: FnMut() -> WindowBuilder
             = check_downsample_with_blit(&gl, program_blit)?;
         can_delinearize_with_blitframebuffer
             = check_blit_delinearization(&gl)?;
-        // TODO: use result of check
     }
     Ok(Box::new(OpenGL32 {
         window, ctx, gl, last_batch_type: LastBatchType::None,
