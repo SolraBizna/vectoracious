@@ -110,6 +110,8 @@ struct OpenGL32 {
     program_text: GLuint,
     /// Program for straight pixel-to-pixel blit
     program_blit: GLuint,
+    /// Program for smooth pixel-to-pixel blit
+    program_blit_smooth: GLuint,
     /// Program for Blit-With-Matrix
     program_bwm: GLuint,
     /// Program for Blit-With-Matrix, but smooth
@@ -186,6 +188,14 @@ struct OpenGL32 {
     world_res_tex: GLuint,
     /// Framebuffer created to resolve the world's multisamples
     world_res_fb: GLuint,
+    /// Width of UI's multisample resolving framebuffer
+    ui_res_w: u32,
+    /// Height of UI's multisample resolving framebuffer
+    ui_res_h: u32,
+    /// Texture created to resolve the UI's multisamples
+    ui_res_tex: GLuint,
+    /// Framebuffer created to resolve the UI's multisamples
+    ui_res_fb: GLuint,
     /// Width of world's oversample resolving framebuffer
     world_ds_w: u32,
     /// Height of world's oversample resolving framebuffer
@@ -242,6 +252,7 @@ const MODEL_VERTEX_SOURCE: &[u8] = include_bytes!("gl32/model.vert");
 const TEXT_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/text.frag");
 const TEXT_VERTEX_SOURCE: &[u8] = include_bytes!("gl32/text.vert");
 const BLIT_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/blit.frag");
+const BLIT_SMOOTH_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/blit_smooth.frag");
 const BLIT_VERTEX_SOURCE: &[u8] = include_bytes!("gl32/blit.vert");
 const BWM_FRAGMENT_SOURCE: &[u8] = include_bytes!("gl32/bwm.frag");
 // bwm program uses the blit vertex shader
@@ -576,7 +587,8 @@ where F: FnMut() -> WindowBuilder
          program_downsample_wm, ui_vao, world_ds_vao, program_mergeup,
          program_mergeup_wm, program_upmergeup, program_upmergeup_wm,
          updog_vao, can_downsample_with_blit, world_final_vao, world_final_vb,
-         program_bwm_smooth, can_delinearize_with_blitframebuffer);
+         program_bwm_smooth, can_delinearize_with_blitframebuffer,
+         program_blit_smooth, ui_res_fb, ui_res_tex);
     unsafe {
         for _ in 0 .. 5 { // grumble grumble
             gl.ClearColor(0.25, 0.25, 0.25, 1.0);
@@ -617,6 +629,11 @@ where F: FnMut() -> WindowBuilder
         let fshader_blit = compile_shader(&gl,"the blit fragment shader",
                                           GL_FRAGMENT_SHADER,
                                           &[BLIT_FRAGMENT_SOURCE])?;
+        let fshader_blit_smooth = compile_shader(&gl,
+                                                 "the smooth blit fragment \
+                                                  shader",
+                                               GL_FRAGMENT_SHADER,
+                                              &[BLIT_SMOOTH_FRAGMENT_SOURCE])?;
         let fshader_bwm = compile_shader(&gl,"the blit-w-mat fragment shader",
                                          GL_FRAGMENT_SHADER,
                                          &[BWM_FRAGMENT_SOURCE])?;
@@ -674,6 +691,10 @@ where F: FnMut() -> WindowBuilder
                                     &[*vshader_text, *fshader_text])?;
         program_blit = link_program(&gl, "the blit shader program",
                                     &[*vshader_blit, *fshader_blit])?;
+        program_blit_smooth = link_program(&gl, "the smooth blit shader \
+                                                 program",
+                                           &[*vshader_blit,
+                                             *fshader_blit_smooth])?;
         program_bwm = link_program(&gl, "the blit-w-mat shader program",
                                     &[*vshader_blit, *fshader_bwm])?;
         program_bwm_smooth = link_program(&gl,
@@ -726,7 +747,7 @@ where F: FnMut() -> WindowBuilder
         world_ds_vb = vbos[4];
         let updog_vb = vbos[5];
         world_final_vb = vbos[6];
-        let mut tex = [0; 8];
+        let mut tex = [0; 9];
         gl.GenTextures(tex.len() as GLint, &mut tex[0]);
         world_tex = tex[0];
         ui_tex = tex[1];
@@ -734,13 +755,15 @@ where F: FnMut() -> WindowBuilder
         gauss_tex = [tex[4], tex[5]];
         world_res_tex = tex[6];
         world_ds_tex = tex[7];
-        let mut fb = [0; 6];
+        ui_res_tex = tex[8];
+        let mut fb = [0; 7];
         gl.GenFramebuffers(fb.len() as GLint, &mut fb[0]);
         world_fb = fb[0];
         ui_fb = fb[1];
         bloom_fb = [fb[2], fb[3]];
         world_res_fb = fb[4];
         world_ds_fb = fb[5];
+        ui_res_fb = fb[6];
         // Text quad drawing stuff
         gl.BindVertexArray(quad_vao);
         gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, quad_ib);
@@ -812,9 +835,10 @@ where F: FnMut() -> WindowBuilder
         // We're gonna be uploading a lot of unaligned pixel data, yuck.
         gl.PixelStorei(GL_UNPACK_ALIGNMENT, 1);
         // Oh, and let's set the uniforms and/or find them!
-        for &prog in &[program_blit, program_bwm, program_bwm_smooth,
-                       program_bloomx, program_bloomy, program_downsample,
-                       program_downsample_wm] {
+        for &prog in &[program_blit, program_blit_smooth,
+                       program_bwm, program_bwm_smooth,
+                       program_bloomx, program_bloomy,
+                       program_downsample, program_downsample_wm] {
             setup_uniforms(&gl, prog, "(a blit program)", &[
                 (b"src\0", &|gl, loc|
                  gl.Uniform1i(loc, 0)),
@@ -917,6 +941,7 @@ where F: FnMut() -> WindowBuilder
         world_w: 0, world_h: 0, world_samples: 0, bloom_w: 0, bloom_h: 0,
         bloom_under_x: 0, bloom_under_y: 0, world_super_x: 0, world_super_y: 0,
         world_tex, world_fb, ui_tex, ui_fb, ui_w: 0, ui_h: 0, ui_samples: 0,
+        ui_res_w: 0, ui_res_h: 0, ui_res_fb, ui_res_tex,
         bloom_fb, bloom_tex, gauss_tex, gauss_radius: [0.0,0.0],
         program_bloomx, program_bloomy, world_res_tex, bloom_vao, bloom_vb,
         program_blit, is_blending: false, world_res_fb, world_ds_fb,
@@ -927,7 +952,7 @@ where F: FnMut() -> WindowBuilder
         can_downsample_with_blit, program_merge_wm, program_mergeup_wm,
         program_upmergeup_wm, world_final_vao, world_final_vb,
         world_final_w: 0, world_final_h: 0, program_bwm_smooth,
-        can_delinearize_with_blitframebuffer,
+        can_delinearize_with_blitframebuffer, program_blit_smooth,
     }))
 }
 
@@ -1258,6 +1283,44 @@ impl Renderer for OpenGL32 {
                               GL_STATIC_DRAW);
             }
         }
+        if ui_samples > 1 && !self.can_delinearize_with_blitframebuffer {
+            let ui_res_w = win_w;
+            let ui_res_h = win_h;
+            if self.ui_res_w != ui_res_w || self.ui_res_h != ui_res_h {
+                    debug!("recreating UI resolve framebuffer at {}x{}",
+                           ui_res_w, ui_res_h);
+                    self.ui_res_w = ui_res_w;
+                    self.ui_res_h = ui_res_h;
+                    unsafe {
+                        gl.BindTexture(GL_TEXTURE_2D, self.ui_res_tex);
+                        gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F as GLint,
+                                      ui_res_w as GLint, ui_res_h as GLint,
+                                      0, GL_RGBA, GL_HALF_FLOAT, null());
+                        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                                         GL_LINEAR as GLint);
+                        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                                         GL_LINEAR as GLint);
+                        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S,
+                                         GL_CLAMP_TO_EDGE as GLint);
+                        gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T,
+                                         GL_CLAMP_TO_EDGE as GLint);
+                        assertgl(gl, "creating float texture")?;
+                        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER,
+                                           self.ui_res_fb);
+                        gl.FramebufferTexture2D(GL_DRAW_FRAMEBUFFER,
+                                                GL_COLOR_ATTACHMENT0,
+                                                GL_TEXTURE_2D,
+                                                self.ui_res_tex, 0);
+                        assertgl(gl, "creating float framebuffer")?;
+                        if gl.CheckFramebufferStatus(GL_DRAW_FRAMEBUFFER)
+                            != GL_FRAMEBUFFER_COMPLETE {
+                                return Err(anyhow!("UI resolve framebuffer \
+                                                    wasn't complete, but had \
+                                                    no errors?!"))
+                            }
+                    }
+                }
+        }
         if self.world_final_w != w || self.world_final_h != h {
             self.world_final_w = w;
             self.world_final_h = h;
@@ -1332,11 +1395,24 @@ impl Renderer for OpenGL32 {
         if self.ui_samples > 1 {
             unsafe {
                 gl.BindFramebuffer(GL_READ_FRAMEBUFFER, self.ui_fb);
-                gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
                 // (viewport will still be OK)
-                gl.BlitFramebuffer(0, 0, self.ui_w as i32, self.ui_h as i32,
-                                   0, 0, self.ui_w as i32, self.ui_h as i32,
-                                   GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                if self.can_delinearize_with_blitframebuffer {
+                    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+                    gl.BlitFramebuffer(0,0, self.ui_w as i32, self.ui_h as i32,
+                                       0,0, self.ui_w as i32, self.ui_h as i32,
+                                       GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                }
+                else {
+                    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.ui_res_fb);
+                    gl.BlitFramebuffer(0,0, self.ui_w as i32, self.ui_h as i32,
+                                       0,0, self.ui_w as i32, self.ui_h as i32,
+                                       GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+                    gl.UseProgram(self.program_blit);
+                    gl.BindTexture(GL_TEXTURE_2D, self.ui_res_tex);
+                    gl.BindVertexArray(self.ui_vao);
+                    gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT, null());
+                }
             }
         }
         self.window.gl_swap_window();
@@ -1560,8 +1636,10 @@ impl OpenGL32 {
             let is_downsample_needed
                 = self.world_super_x > 1 || self.world_super_y > 1;
             let is_bwm_needed = params.world_mat != COLOR_IDENTITY_MATRIX;
+            let may_blit_to_ui = self.can_delinearize_with_blitframebuffer
+                || self.which_ui_fb() != 0;
             // If bloom is NOT enabled, AND there is no need for a BWM...
-            if !is_bloom_enabled && !is_bwm_needed
+            if may_blit_to_ui && !is_bloom_enabled && !is_bwm_needed
                 && self.world_super_x <= 2 && self.world_super_y <= 2
                 && self.world_samples <= 1 {
                 // ...then we can just blit directly to whichever UI
@@ -1580,7 +1658,8 @@ impl OpenGL32 {
                 ret = None;
             }
             else {
-                // Bloom is enabled OR we need a BWM.
+                // Bloom is enabled OR we need a BWM. (Or we just aren't
+                // allowed to use BlitFramebuffer to delinearize)
                 let (world_src_tex, world_src_fb) = if is_resolve_needed {
                     gl.BindFramebuffer(GL_READ_FRAMEBUFFER, self.world_fb);
                     gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, self.world_res_fb);
@@ -1651,7 +1730,7 @@ impl OpenGL32 {
                         gl.BindTexture(GL_TEXTURE_2D, world_src_tex);
                         gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT,null());
                     }
-                    else {
+                    else if may_blit_to_ui {
                         gl.BindFramebuffer(GL_READ_FRAMEBUFFER, world_src_fb);
                         let filter = if self.world_final_w != self.ui_w
                             || self.world_final_h != self.ui_h { GL_LINEAR }
@@ -1661,6 +1740,18 @@ impl OpenGL32 {
                                            0, 0, self.ui_w as GLint,
                                            self.ui_h as GLint,
                                            GL_COLOR_BUFFER_BIT, filter);
+                    }
+                    else {
+                        if self.world_is_undersampled {
+                            gl.BindVertexArray(self.updog_vao);
+                            gl.UseProgram(self.program_blit_smooth);
+                        }
+                        else {
+                            gl.BindVertexArray(self.world_final_vao);
+                            gl.UseProgram(self.program_blit);
+                        }
+                        gl.BindTexture(GL_TEXTURE_2D, world_src_tex);
+                        gl.DrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_SHORT,null());
                     }
                 }
             }
@@ -1891,6 +1982,10 @@ impl OpenGL32 {
 /// doing a shader that doesn't benefit from it.
 fn check_multisample_bug(gl: &Procs, program_model: GLuint)
     -> anyhow::Result<bool> {
+    if env::var("TEST_FORCE_MULTISAMPLE").is_ok() {
+        warn!("Saw TEST_FORCE_MULTISAMPLE in the environment. We will never disable GL_MULTISAMPLE!");
+        return Ok(false)
+    }
     const MULTISAMPLE_COVERAGE_TEST_BATCH: &[ModelVert] = &[
         ModelVert { x: -1.0, y: -1.0, c: 0 },
         ModelVert { x:  1.0, y: -1.0, c: 0 },
@@ -1986,6 +2081,10 @@ fn check_multisample_bug(gl: &Procs, program_model: GLuint)
 /// our generic downsample shader.
 fn check_downsample_with_blit(gl: &Procs, program_blit: GLuint)
     -> anyhow::Result<bool> {
+    if env::var("TEST_DISABLE_DOWNSAMPLE_WITH_BLIT").is_ok() {
+        warn!("Saw TEST_DISABLE_DOWNSAMPLE_WITH_BLIT in the environment. We will pretend you can't downsample with BlitFramebuffer!");
+        return Ok(false)
+    }
     const SOURCE_TEXTURE: [f32; 12] = [
         1.0, 0.0, 0.0,
         0.0, 0.5, 0.0,
@@ -2101,6 +2200,10 @@ fn check_downsample_with_blit(gl: &Procs, program_blit: GLuint)
 /// framebuffer to an sRGB framebuffer without screwups.
 fn check_blit_delinearization(gl: &Procs)
     -> anyhow::Result<bool> {
+    if env::var("TEST_DISABLE_BLIT_DELINEARIZATION").is_ok() {
+        warn!("Saw TEST_DISABLE_BLIT_DELINEARIZATION in the environment. We will pretend that blit delinearization never works!");
+        return Ok(false)
+    }
     let mut fbs = [0; 2];
     let mut texs = [0; 3];
     unsafe {
