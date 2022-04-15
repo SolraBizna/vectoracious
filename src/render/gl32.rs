@@ -1634,7 +1634,7 @@ impl OpenGL32 {
                             setup_uniforms(&gl, self.program_bwm_smooth,
                                            "blit-with-matrix (smooth)", &[
                                 (b"mat\0", &|gl, loc|
-                                 gl.UniformMatrix4x3fv(loc, 1, 0,
+                                gl.UniformMatrix4x3fv(loc, 1, 0,
                                                        &params.world_mat[0]))
                                            ]);
                         }
@@ -2152,7 +2152,7 @@ fn check_blit_delinearization(gl: &Procs)
         gl.DeleteFramebuffers(fbs.len() as GLint, &mut fbs[0]);
         gl.DeleteTextures(texs.len() as GLint, &mut texs[0]);
         assertgl(gl, "checking for BlitFramebuffer sRGB conversion")?;
-        if buf[3] >= 0.49 && buf[3] <= 0.51 && buf[0] < 0.3 {
+        if buf[3] >= 0.49 && buf[3] <= 0.51 && buf[0] > 0.7 {
             debug!("We can use BlitFramebuffer to do sRGB conversion. Nice.");
             Ok(false)
         }
