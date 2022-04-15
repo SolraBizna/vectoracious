@@ -1952,6 +1952,7 @@ fn check_multisample_bug(gl: &Procs, program_model: GLuint)
         gl.DeleteFramebuffers(fbs.len() as GLint, &mut fbs[0]);
         gl.DeleteTextures(texs.len() as GLint, &mut texs[0]);
         gl.DeleteBuffers(vbs.len() as GLint, &mut vbs[0]);
+        assertgl(gl, "checking for the multisample bug")?;
         // correct answer is 1.0, 0.0, 1.0
         if &buf == &[1.0, 0.0, 1.0] {
             debug!("Didn't find Mesa bug #4613. Nice.");
@@ -2067,6 +2068,7 @@ fn check_downsample_with_blit(gl: &Procs, program_blit: GLuint)
         gl.DeleteFramebuffers(fbs.len() as GLint, &mut fbs[0]);
         gl.DeleteTextures(texs.len() as GLint, &mut texs[0]);
         gl.DeleteBuffers(vbs.len() as GLint, &mut vbs[0]);
+        assertgl(gl, "checking for the linear framebuffer blit optimization")?;
         // correct answer is 0.25, 0.25, 0.125
         if &buf == &[0.25, 0.25, 0.125] {
             debug!("Downsampling with BlitFramebuffer is accurate. Nice.");
