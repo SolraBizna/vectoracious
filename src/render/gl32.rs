@@ -577,18 +577,6 @@ where F: FnMut() -> WindowBuilder
     // Unsafe justification: Initial state for OpenGL context. All pointer
     // operations are statically-bounded, and an error check is performed
     // afterwards.
-    let (program_model, program_text, force_multisample, quad_vao, quad_ib,
-         quad_vb, loc_transform, loc_opacity, loc_colors, program_blit,
-         max_multisample_power, program_bwm, ui_tex, bloom_tex, world_tex,
-         ui_fb, bloom_fb, world_fb, program_bloomx, program_bloomy,
-         gauss_tex, bloom_vao, bloom_vb, world_res_tex,
-         world_res_fb, world_ds_tex, world_ds_fb, program_merge,
-         program_merge_wm, ui_vb, world_ds_vb, program_downsample,
-         program_downsample_wm, ui_vao, world_ds_vao, program_mergeup,
-         program_mergeup_wm, program_upmergeup, program_upmergeup_wm,
-         updog_vao, can_downsample_with_blit, world_final_vao, world_final_vb,
-         program_bwm_smooth, can_delinearize_with_blitframebuffer,
-         program_blit_smooth, ui_res_fb, ui_res_tex);
     unsafe {
         for _ in 0 .. 5 { // grumble grumble
             gl.ClearColor(0.25, 0.25, 0.25, 1.0);
@@ -610,160 +598,167 @@ where F: FnMut() -> WindowBuilder
             info!("ARB_debug_output extension is missing. OpenGL errors may \
                    not be detected promptly.");
         }
-        // Compile and link the shaders... oh boy.
-        let fshader_model = compile_shader(&gl, "the model fragment shader",
-                                           GL_FRAGMENT_SHADER,
-                                           &[MODEL_FRAGMENT_SOURCE])?;
-        let vshader_model = compile_shader(&gl, "the model vertex shader",
-                                           GL_VERTEX_SHADER,
-                                           &[MODEL_VERTEX_SOURCE])?;
-        let fshader_text = compile_shader(&gl, "the text fragment shader",
-                                          GL_FRAGMENT_SHADER,
-                                          &[TEXT_FRAGMENT_SOURCE])?;
-        let vshader_text = compile_shader(&gl, "the text vertex shader",
-                                          GL_VERTEX_SHADER,
-                                          &[TEXT_VERTEX_SOURCE])?;
-        let vshader_blit = compile_shader(&gl, "the blit vertex shader",
-                                          GL_VERTEX_SHADER,
-                                          &[BLIT_VERTEX_SOURCE])?;
-        let fshader_blit = compile_shader(&gl,"the blit fragment shader",
-                                          GL_FRAGMENT_SHADER,
-                                          &[BLIT_FRAGMENT_SOURCE])?;
-        let fshader_blit_smooth = compile_shader(&gl,
-                                                 "the smooth blit fragment \
-                                                  shader",
+        let (program_model, program_text, program_blit, program_blit_smooth,
+             program_bwm, program_bwm_smooth, program_bloomx, program_bloomy,
+             program_merge, program_mergeup, program_upmergeup,
+             program_merge_wm, program_mergeup_wm, program_upmergeup_wm,
+             program_downsample, program_downsample_wm);
+        {
+            // Compile and link the shaders... oh boy.
+            let fshader_model = compile_shader(&gl, "the model fragment shader",
                                                GL_FRAGMENT_SHADER,
-                                              &[BLIT_SMOOTH_FRAGMENT_SOURCE])?;
-        let fshader_bwm = compile_shader(&gl,"the blit-w-mat fragment shader",
-                                         GL_FRAGMENT_SHADER,
-                                         &[BWM_FRAGMENT_SOURCE])?;
-        let fshader_bwm_smooth = compile_shader(&gl,
-                                                "the smooth blit-w-mat \
-                                                 fragment shader",
-                                                GL_FRAGMENT_SHADER,
-                                               &[BWM_SMOOTH_FRAGMENT_SOURCE])?;
-        let fshader_bloomx = compile_shader(&gl, "the bloom-x fragment shader",
-                                            GL_FRAGMENT_SHADER,
-                                            &[BLOOM_X_SUPPLEMENT,
-                                              BLOOM_FRAGMENT_SOURCE])?;
-        let fshader_bloomy = compile_shader(&gl, "the bloom-y fragment shader",
-                                            GL_FRAGMENT_SHADER,
-                                            &[BLOOM_Y_SUPPLEMENT,
-                                              BLOOM_FRAGMENT_SOURCE])?;
-        let fshader_merge = compile_shader(&gl,"the merge fragment shader",
-                                           GL_FRAGMENT_SHADER,
-                                           &[MERGE_FRAGMENT_SOURCE])?;
-        let fshader_mergeup = compile_shader(&gl,"the mergeup fragment shader",
-                                             GL_FRAGMENT_SHADER,
-                                             &[MERGEUP_FRAGMENT_SOURCE])?;
-        let fshader_upmergeup = compile_shader(&gl,"the upmergeup fragment \
-                                                    shader",
-                                               GL_FRAGMENT_SHADER,
-                                               &[UPMERGEUP_FRAGMENT_SOURCE])?;
-        let fshader_merge_wm = compile_shader(&gl,"the merge (with matrix) \
-                                                   fragment shader",
+                                               &[MODEL_FRAGMENT_SOURCE])?;
+            let vshader_model = compile_shader(&gl, "the model vertex shader",
+                                               GL_VERTEX_SHADER,
+                                               &[MODEL_VERTEX_SOURCE])?;
+            let fshader_text = compile_shader(&gl, "the text fragment shader",
                                               GL_FRAGMENT_SHADER,
-                                              &[WITH_MATRIX_SUPPLEMENT,
-                                                MERGE_FRAGMENT_SOURCE])?;
-        let fshader_mergeup_wm = compile_shader(&gl,"the mergeup (with \
-                                                     matrix) fragment shader",
+                                              &[TEXT_FRAGMENT_SOURCE])?;
+            let vshader_text = compile_shader(&gl, "the text vertex shader",
+                                              GL_VERTEX_SHADER,
+                                              &[TEXT_VERTEX_SOURCE])?;
+            let vshader_blit = compile_shader(&gl, "the blit vertex shader",
+                                              GL_VERTEX_SHADER,
+                                              &[BLIT_VERTEX_SOURCE])?;
+            let fshader_blit = compile_shader(&gl,"the blit fragment shader",
+                                              GL_FRAGMENT_SHADER,
+                                              &[BLIT_FRAGMENT_SOURCE])?;
+            let fshader_blit_smooth = compile_shader(&gl,
+                                                     "the smooth blit fragment \
+                                                      shader",
+                                                     GL_FRAGMENT_SHADER,
+                                                     &[BLIT_SMOOTH_FRAGMENT_SOURCE])?;
+            let fshader_bwm = compile_shader(&gl,"the blit-w-mat fragment shader",
+                                             GL_FRAGMENT_SHADER,
+                                             &[BWM_FRAGMENT_SOURCE])?;
+            let fshader_bwm_smooth = compile_shader(&gl,
+                                                    "the smooth blit-w-mat \
+                                                     fragment shader",
+                                                    GL_FRAGMENT_SHADER,
+                                                    &[BWM_SMOOTH_FRAGMENT_SOURCE])?;
+            let fshader_bloomx = compile_shader(&gl, "the bloom-x fragment shader",
                                                 GL_FRAGMENT_SHADER,
-                                                &[WITH_MATRIX_SUPPLEMENT,
-                                                  MERGEUP_FRAGMENT_SOURCE])?;
-        let fshader_upmergeup_wm = compile_shader(&gl,"the upmergeup (with \
-                                                       matrix) fragment \
-                                                       shader",
+                                                &[BLOOM_X_SUPPLEMENT,
+                                                  BLOOM_FRAGMENT_SOURCE])?;
+            let fshader_bloomy = compile_shader(&gl, "the bloom-y fragment shader",
+                                                GL_FRAGMENT_SHADER,
+                                                &[BLOOM_Y_SUPPLEMENT,
+                                                  BLOOM_FRAGMENT_SOURCE])?;
+            let fshader_merge = compile_shader(&gl,"the merge fragment shader",
+                                               GL_FRAGMENT_SHADER,
+                                               &[MERGE_FRAGMENT_SOURCE])?;
+            let fshader_mergeup = compile_shader(&gl,"the mergeup fragment shader",
+                                                 GL_FRAGMENT_SHADER,
+                                                 &[MERGEUP_FRAGMENT_SOURCE])?;
+            let fshader_upmergeup = compile_shader(&gl,"the upmergeup fragment \
+                                                        shader",
+                                                   GL_FRAGMENT_SHADER,
+                                                   &[UPMERGEUP_FRAGMENT_SOURCE])?;
+            let fshader_merge_wm = compile_shader(&gl,"the merge (with matrix) \
+                                                       fragment shader",
                                                   GL_FRAGMENT_SHADER,
                                                   &[WITH_MATRIX_SUPPLEMENT,
-                                                  UPMERGEUP_FRAGMENT_SOURCE])?;
-        let fshader_downsample
-            = compile_shader(&gl, "the downsample fragment shader",
-                             GL_FRAGMENT_SHADER,
-                             &[DOWNSAMPLE_FRAGMENT_SOURCE])?;
-        let fshader_downsample_wm
-            = compile_shader(&gl,"the downsample with matrix shader",
-                             GL_FRAGMENT_SHADER,
-                             &[WITH_MATRIX_SUPPLEMENT,
-                               DOWNSAMPLE_FRAGMENT_SOURCE])?;
-        program_model = link_program(&gl, "the model shader program",
-                                     &[*vshader_model, *fshader_model])?;
-        program_text = link_program(&gl, "the text shader program",
-                                    &[*vshader_text, *fshader_text])?;
-        program_blit = link_program(&gl, "the blit shader program",
-                                    &[*vshader_blit, *fshader_blit])?;
-        program_blit_smooth = link_program(&gl, "the smooth blit shader \
-                                                 program",
-                                           &[*vshader_blit,
-                                             *fshader_blit_smooth])?;
-        program_bwm = link_program(&gl, "the blit-w-mat shader program",
-                                    &[*vshader_blit, *fshader_bwm])?;
-        program_bwm_smooth = link_program(&gl,
-                                          "the smooth blit-w-mat shader \
-                                           program",
-                                          &[*vshader_blit,
-                                            *fshader_bwm_smooth])?;
-        program_bloomx = link_program(&gl, "the bloom-x shader program",
-                                      &[*vshader_blit, *fshader_bloomx])?;
-        program_bloomy = link_program(&gl, "the bloom-y shader program",
-                                      &[*vshader_blit, *fshader_bloomy])?;
-        program_merge = link_program(&gl, "the merge shader program",
-                                     &[*vshader_blit, *fshader_merge])?;
-        program_mergeup = link_program(&gl, "the mergeup shader program",
-                                       &[*vshader_blit, *fshader_mergeup])?;
-        program_upmergeup = link_program(&gl, "the upmergeup shader program",
-                                         &[*vshader_blit, *fshader_upmergeup])?;
-        program_merge_wm = link_program(&gl, "the merge (with matrix) shader \
-                                              program",
-                                        &[*vshader_blit, *fshader_merge_wm])?;
-        program_mergeup_wm = link_program(&gl, "the mergeup (with matrix) \
-                                                shader program",
-                                          &[*vshader_blit,
-                                            *fshader_mergeup_wm])?;
-        program_upmergeup_wm = link_program(&gl, "the upmergeup (with matrix) \
-                                                  shader program",
-                                            &[*vshader_blit,
-                                              *fshader_upmergeup_wm])?;
-        program_downsample = link_program(&gl, "the downsample program",
-                                          &[*vshader_blit,
-                                            *fshader_downsample])?;
-        program_downsample_wm = link_program(&gl, "downsample with matrix",
-                                             &[*vshader_blit,
-                                               *fshader_downsample_wm])?;
+                                                    MERGE_FRAGMENT_SOURCE])?;
+            let fshader_mergeup_wm = compile_shader(&gl,"the mergeup (with \
+                                                         matrix) fragment shader",
+                                                    GL_FRAGMENT_SHADER,
+                                                    &[WITH_MATRIX_SUPPLEMENT,
+                                                      MERGEUP_FRAGMENT_SOURCE])?;
+            let fshader_upmergeup_wm = compile_shader(&gl,"the upmergeup (with \
+                                                           matrix) fragment \
+                                                           shader",
+                                                      GL_FRAGMENT_SHADER,
+                                                      &[WITH_MATRIX_SUPPLEMENT,
+                                                        UPMERGEUP_FRAGMENT_SOURCE])?;
+            let fshader_downsample
+                = compile_shader(&gl, "the downsample fragment shader",
+                                 GL_FRAGMENT_SHADER,
+                                 &[DOWNSAMPLE_FRAGMENT_SOURCE])?;
+            let fshader_downsample_wm
+                = compile_shader(&gl,"the downsample with matrix shader",
+                                 GL_FRAGMENT_SHADER,
+                                 &[WITH_MATRIX_SUPPLEMENT,
+                                   DOWNSAMPLE_FRAGMENT_SOURCE])?;
+            program_model = link_program(&gl, "the model shader program",
+                                             &[*vshader_model, *fshader_model])?;
+            program_text = link_program(&gl, "the text shader program",
+                                            &[*vshader_text, *fshader_text])?;
+            program_blit = link_program(&gl, "the blit shader program",
+                                            &[*vshader_blit, *fshader_blit])?;
+            program_blit_smooth = link_program(&gl, "the smooth blit shader \
+                                                         program",
+                                                   &[*vshader_blit,
+                                                     *fshader_blit_smooth])?;
+            program_bwm = link_program(&gl, "the blit-w-mat shader program",
+                                           &[*vshader_blit, *fshader_bwm])?;
+            program_bwm_smooth = link_program(&gl,
+                                                  "the smooth blit-w-mat shader \
+                                                   program",
+                                                  &[*vshader_blit,
+                                                    *fshader_bwm_smooth])?;
+            program_bloomx = link_program(&gl, "the bloom-x shader program",
+                                              &[*vshader_blit, *fshader_bloomx])?;
+            program_bloomy = link_program(&gl, "the bloom-y shader program",
+                                              &[*vshader_blit, *fshader_bloomy])?;
+            program_merge = link_program(&gl, "the merge shader program",
+                                             &[*vshader_blit, *fshader_merge])?;
+            program_mergeup = link_program(&gl, "the mergeup shader program",
+                                               &[*vshader_blit, *fshader_mergeup])?;
+            program_upmergeup = link_program(&gl, "the upmergeup shader program",
+                                                 &[*vshader_blit, *fshader_upmergeup])?;
+            program_merge_wm = link_program(&gl, "the merge (with matrix) shader \
+                                                      program",
+                                                &[*vshader_blit, *fshader_merge_wm])?;
+            program_mergeup_wm = link_program(&gl, "the mergeup (with matrix) \
+                                                        shader program",
+                                                  &[*vshader_blit,
+                                                    *fshader_mergeup_wm])?;
+            program_upmergeup_wm = link_program(&gl, "the upmergeup (with matrix) \
+                                                          shader program",
+                                                    &[*vshader_blit,
+                                                      *fshader_upmergeup_wm])?;
+            program_downsample = link_program(&gl, "the downsample program",
+                                                  &[*vshader_blit,
+                                                    *fshader_downsample])?;
+            program_downsample_wm = link_program(&gl, "downsample with matrix",
+                                                     &[*vshader_blit,
+                                                       *fshader_downsample_wm])?;
+        }
         // Generate VAOs, VBOs, textures, and framebuffers
         let mut vaos = [0; 6];
         gl.GenVertexArrays(vaos.len() as GLint, &mut vaos[0]);
-        quad_vao = vaos[0];
-        bloom_vao = vaos[1];
-        ui_vao = vaos[2];
-        world_ds_vao = vaos[3];
-        updog_vao = vaos[4];
-        world_final_vao = vaos[5];
+        let quad_vao = vaos[0];
+        let bloom_vao = vaos[1];
+        let ui_vao = vaos[2];
+        let world_ds_vao = vaos[3];
+        let updog_vao = vaos[4];
+        let world_final_vao = vaos[5];
         let mut vbos = [0; 7];
         gl.GenBuffers(vbos.len() as GLint, &mut vbos[0]);
-        quad_ib = vbos[0];
-        quad_vb = vbos[1];
-        bloom_vb = vbos[2];
-        ui_vb = vbos[3];
-        world_ds_vb = vbos[4];
+        let quad_ib = vbos[0];
+        let quad_vb = vbos[1];
+        let bloom_vb = vbos[2];
+        let ui_vb = vbos[3];
+        let world_ds_vb = vbos[4];
         let updog_vb = vbos[5];
-        world_final_vb = vbos[6];
+        let world_final_vb = vbos[6];
         let mut tex = [0; 9];
         gl.GenTextures(tex.len() as GLint, &mut tex[0]);
-        world_tex = tex[0];
-        ui_tex = tex[1];
-        bloom_tex = [tex[2], tex[3]];
-        gauss_tex = [tex[4], tex[5]];
-        world_res_tex = tex[6];
-        world_ds_tex = tex[7];
-        ui_res_tex = tex[8];
+        let world_tex = tex[0];
+        let ui_tex = tex[1];
+        let bloom_tex = [tex[2], tex[3]];
+        let gauss_tex = [tex[4], tex[5]];
+        let world_res_tex = tex[6];
+        let world_ds_tex = tex[7];
+        let ui_res_tex = tex[8];
         let mut fb = [0; 7];
         gl.GenFramebuffers(fb.len() as GLint, &mut fb[0]);
-        world_fb = fb[0];
-        ui_fb = fb[1];
-        bloom_fb = [fb[2], fb[3]];
-        world_res_fb = fb[4];
-        world_ds_fb = fb[5];
-        ui_res_fb = fb[6];
+        let world_fb = fb[0];
+        let ui_fb = fb[1];
+        let bloom_fb = [fb[2], fb[3]];
+        let world_res_fb = fb[4];
+        let world_ds_fb = fb[5];
+        let ui_res_fb = fb[6];
         // Text quad drawing stuff
         gl.BindVertexArray(quad_vao);
         gl.BindBuffer(GL_ELEMENT_ARRAY_BUFFER, quad_ib);
@@ -865,11 +860,11 @@ where F: FnMut() -> WindowBuilder
             (b"atlas\0", &|gl, loc| gl.Uniform1i(loc, 0)),
         ]);
         gl.UseProgram(program_model);
-        loc_transform = gl.GetUniformLocation(program_model,
+        let loc_transform = gl.GetUniformLocation(program_model,
                                               transmute(b"transform\0"));
-        loc_colors = gl.GetUniformLocation(program_model,
+        let loc_colors = gl.GetUniformLocation(program_model,
                                            transmute(b"colors\0"));
-        loc_opacity = gl.GetUniformLocation(program_model,
+        let loc_opacity = gl.GetUniformLocation(program_model,
                                             transmute(b"opacity\0"));
         // Set up initial values for the uniforms... which, COINCIDENTALLY, are
         // also what we want for the multisample test
@@ -918,6 +913,7 @@ where F: FnMut() -> WindowBuilder
                             parseable value. Ignoring."),
             }
         }
+        let max_multisample_power;
         if max_sample_count >= 32 { max_multisample_power = 5 }
         else if max_sample_count >= 16 { max_multisample_power = 4 }
         else if max_sample_count >= 8 { max_multisample_power = 3 }
@@ -925,34 +921,37 @@ where F: FnMut() -> WindowBuilder
         else if max_sample_count >= 2 { max_multisample_power = 1 }
         else { max_multisample_power = 0 }
         assertgl(&gl, "initializing the context")?;
-        force_multisample = if max_multisample_power <= 0 { false }
+        let force_multisample = if max_multisample_power <= 0 { false }
         else { check_multisample_bug(&gl, program_model)? };
-        can_downsample_with_blit
+        let can_downsample_with_blit
             = check_downsample_with_blit(&gl, program_blit)?;
-        can_delinearize_with_blitframebuffer
+        let can_delinearize_with_blitframebuffer
             = check_blit_delinearization(&gl)?;
+        Ok(Box::new(OpenGL32 {
+            window, ctx, gl, last_batch_type: LastBatchType::None,
+            program_model, program_text, program_bwm, bound_texture:
+            None, force_multisample, quad_vao, quad_vb, model_cache:
+            ModelCache::new(), loc_transform, loc_colors, loc_opacity,
+            max_multisample_power, world_w: 0, world_h: 0,
+            world_samples: 0, bloom_w: 0, bloom_h: 0, bloom_under_x:
+            0, bloom_under_y: 0, world_super_x: 0, world_super_y: 0,
+            world_tex, world_fb, ui_tex, ui_fb, ui_w: 0, ui_h: 0,
+            ui_samples: 0, ui_res_w: 0, ui_res_h: 0, ui_res_fb,
+            ui_res_tex, bloom_fb, bloom_tex, gauss_tex, gauss_radius:
+            [0.0,0.0], program_bloomx, program_bloomy, world_res_tex,
+            bloom_vao, bloom_vb, program_blit, is_blending: false,
+            world_res_fb, world_ds_fb, world_ds_tex, world_ds_w: 0,
+            world_ds_h: 0, world_res_w: 0, world_res_h: 0,
+            program_merge, world_ds_vb, ui_vb, program_downsample,
+            program_downsample_wm, ui_vao, world_ds_vao,
+            program_mergeup, program_upmergeup, world_is_undersampled:
+            false, updog_vao, can_downsample_with_blit,
+            program_merge_wm, program_mergeup_wm,
+            program_upmergeup_wm, world_final_vao, world_final_vb,
+            world_final_w: 0, world_final_h: 0, program_bwm_smooth,
+            can_delinearize_with_blitframebuffer, program_blit_smooth,
+        }))
     }
-    Ok(Box::new(OpenGL32 {
-        window, ctx, gl, last_batch_type: LastBatchType::None,
-        program_model, program_text, program_bwm, bound_texture: None,
-        force_multisample, quad_vao, quad_vb, model_cache: ModelCache::new(),
-        loc_transform, loc_colors, loc_opacity, max_multisample_power,
-        world_w: 0, world_h: 0, world_samples: 0, bloom_w: 0, bloom_h: 0,
-        bloom_under_x: 0, bloom_under_y: 0, world_super_x: 0, world_super_y: 0,
-        world_tex, world_fb, ui_tex, ui_fb, ui_w: 0, ui_h: 0, ui_samples: 0,
-        ui_res_w: 0, ui_res_h: 0, ui_res_fb, ui_res_tex,
-        bloom_fb, bloom_tex, gauss_tex, gauss_radius: [0.0,0.0],
-        program_bloomx, program_bloomy, world_res_tex, bloom_vao, bloom_vb,
-        program_blit, is_blending: false, world_res_fb, world_ds_fb,
-        world_ds_tex, world_ds_w: 0, world_ds_h: 0, world_res_w: 0,
-        world_res_h: 0, program_merge, world_ds_vb, ui_vb, program_downsample,
-        program_downsample_wm, ui_vao, world_ds_vao, program_mergeup,
-        program_upmergeup, world_is_undersampled: false, updog_vao,
-        can_downsample_with_blit, program_merge_wm, program_mergeup_wm,
-        program_upmergeup_wm, world_final_vao, world_final_vb,
-        world_final_w: 0, world_final_h: 0, program_bwm_smooth,
-        can_delinearize_with_blitframebuffer, program_blit_smooth,
-    }))
 }
 
 impl Renderer for OpenGL32 {
