@@ -1,6 +1,6 @@
 use std::{
     ops::{Deref,DerefMut},
-    rc::Rc,
+    sync::Arc,
 };
 
 use half::f16;
@@ -196,7 +196,7 @@ impl Context {
     }
     pub fn add_face(
         &mut self,
-        face_data: Rc<Vec<u8>>,
+        face_data: Arc<Vec<u8>>,
         index: u32,
         border_texels: f32,
         texels_per_em_x: f32,

@@ -1,6 +1,8 @@
 use crate::*;
 
-use std::rc::Rc;
+use std::{
+    sync::Arc,
+};
 
 use psilo_text::{TextHandler as PsiloTextHandler, AtlasHandler};
 use rustybuzz::{Face, UnicodeBuffer};
@@ -80,7 +82,7 @@ impl TextHandler {
                       text_handler: PsiloTextHandler::new(),
                       atlas_size, atlas_recip_size: 1.0 / (atlas_size as f32) }
     }
-    pub fn add_face(&mut self, face_data: Rc<Vec<u8>>, index: u32,
+    pub fn add_face(&mut self, face_data: Arc<Vec<u8>>, index: u32,
                     border_texels: f32, texels_per_em_x: f32,
                     texels_per_em_y: f32) -> Option<usize> {
         self.text_handler.add_face(face_data,
