@@ -15,10 +15,10 @@ struct BoundingBox {
     out_x: f32, out_y: f32, out_w: f32, out_h: f32,
 }
 
-#[derive(PartialEq)]
-pub(crate) struct ModelPoint {
-    pub(crate) point: Point,
-    pub(crate) color_idx: u8,
+#[derive(Debug, PartialEq)]
+pub struct ModelPoint {
+    pub point: Point,
+    pub color_idx: u8,
 }
 
 pub struct Model {
@@ -156,6 +156,24 @@ fn find_or_insert_point(point: ModelPoint, points: &mut Vec<ModelPoint>) -> usiz
 }
 
 impl Model {
+    pub fn from_components(points: Vec<ModelPoint>,
+                           triangles: Vec<(u16,u16,u16)>,
+                           colors: Vec<Color>) -> Result<Model, &'static str> {
+        if points.len() > 65536 {
+            return Err("Too many points in model (maximum is 65 536)")
+        }
+        if colors.len() > 16 {
+            return Err("Too many colors in model (maximum is 16)");
+        }
+        for &(a,b,c) in triangles.iter() {
+            if a as usize >= points.len() || b as usize >= points.len()
+            || c as usize >= points.len() {
+                return Err("Triangle in model has an out-of-range index")
+            }
+        }
+        Ok(Model { points, triangles, colors,
+                   unique_id: NEXT_UNIQUE_ID.fetch_add(1, Ordering::Relaxed)})
+    }
     pub fn from_v2d(input: &str) -> Result<Model, V2DParseError> {
         let mut bounding_box = BoundingBox {
             in_x: 0.0, in_y: 0.0, in_w: 1.0, in_h: 1.0,
