@@ -179,10 +179,11 @@ impl Model {
                     let prepremultiplied = parsed[0].find('p').is_some();
                     match parse_color(linear, prepremultiplied, &parsed[1..]) {
                         Ok(x) => {
-                            if colors.len() > 256 {
+                            // TODO: lift the maximum to 256 some day
+                            if colors.len() > 16 {
                                 return Err(V2DParseError {
                                     lineno,
-                                    wat: "too many colors (maximum of 256)",
+                                    wat: "too many colors (maximum of 16)",
                                     inner: ().into()
                                 })
                             }
