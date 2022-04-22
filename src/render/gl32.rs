@@ -72,7 +72,7 @@ impl ModelCache {
                     // something
                     gl.BufferData(GL_ARRAY_BUFFER,
                                   size as GLsizeiptr,
-                                  transmute(&verts[0]),
+                                  transmute(verts[..].as_ptr()),
                                   GL_STATIC_DRAW);
                     // Model: X___Y___C___
                     gl.BindVertexArray(vao);
@@ -87,7 +87,7 @@ impl ModelCache {
                     }
                     gl.BufferData(GL_ELEMENT_ARRAY_BUFFER,
                                   (indices.len() * 2) as GLsizeiptr,
-                                  transmute(&indices[0]),
+                                  transmute(indices[..].as_ptr()),
                                   GL_STATIC_DRAW);
                     num_elements = indices.len() as GLint;
                 }
