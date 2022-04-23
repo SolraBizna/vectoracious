@@ -277,6 +277,9 @@ impl Render<'_> {
         self.flush();
         self.ctx.renderer.present();
     }
+    pub fn get_size(&self) -> (u32, u32) {
+        self.ctx.renderer.get_size()
+    }
 }
 
 impl<'a> RenderWorld<'a> {
