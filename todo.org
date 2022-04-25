@@ -18,3 +18,4 @@
 * TODO support 10-bit color
 * DONE all the code paths with bloom completely disabled D:
 * TODO change render params to be a reference passed to the begin rendering function
+* TODO Retina mouse coordinates fix...
