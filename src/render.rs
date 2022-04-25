@@ -50,7 +50,7 @@ pub(crate) trait Renderer {
     fn get_size(&self) -> (u32, u32);
     /// Attempt to resize the underlying drawable when the window size is
     /// reported as changed.
-    fn resized(&self, w: u32, h: u32) -> anyhow::Result<()>;
+    fn resized(&mut self, w: u32, h: u32) -> anyhow::Result<()>;
 }
 
 pub(crate) fn create_renderer<F>(video: &VideoSubsystem, mut builder_maker: F)

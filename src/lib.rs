@@ -219,7 +219,7 @@ impl Context {
     fn finish_world(&mut self) {
         self.renderer.finish_world(&self.render_params);
     }
-    pub fn resized(&self, w: u32, h: u32) -> anyhow::Result<()> {
+    pub fn resized(&mut self, w: u32, h: u32) -> anyhow::Result<()> {
         self.renderer.resized(w, h)
     }
 }

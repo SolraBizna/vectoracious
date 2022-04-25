@@ -1418,7 +1418,7 @@ impl Renderer for OpenGL32 {
     fn get_size(&self) -> (u32, u32) {
         self.window.drawable_size()
     }
-    fn resized(&self, _w: u32, _h: u32) -> anyhow::Result<()> {
+    fn resized(&mut self, _w: u32, _h: u32) -> anyhow::Result<()> {
         Ok(())
     }
     fn enable_blend(&mut self) {
