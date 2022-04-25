@@ -51,6 +51,9 @@ pub(crate) trait Renderer {
     /// Attempt to resize the underlying drawable when the window size is
     /// reported as changed.
     fn resized(&mut self, w: u32, h: u32) -> anyhow::Result<()>;
+    /// Purge any cached data relating to a given model. (If the model is
+    /// rendered again, it will have to be recached.)
+    fn purge_model(&mut self, model: &Model);
 }
 
 pub(crate) fn create_renderer<F>(video: &VideoSubsystem, mut builder_maker: F)

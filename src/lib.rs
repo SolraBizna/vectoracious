@@ -222,6 +222,9 @@ impl Context {
     pub fn resized(&mut self, w: u32, h: u32) -> anyhow::Result<()> {
         self.renderer.resized(w, h)
     }
+    pub fn purge_model(&mut self, model: &Model) {
+        self.renderer.purge_model(model);
+    }
 }
 
 impl Render<'_> {
@@ -279,6 +282,9 @@ impl Render<'_> {
     }
     pub fn get_size(&self) -> (u32, u32) {
         self.ctx.renderer.get_size()
+    }
+    pub fn purge_model(&mut self, model: &Model) {
+        self.ctx.renderer.purge_model(model);
     }
 }
 

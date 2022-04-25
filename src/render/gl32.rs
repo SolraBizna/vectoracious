@@ -2,7 +2,7 @@ use super::*;
 
 use core::slice;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, hash_map::Entry},
     env,
     f32::consts::{E,PI},
     fmt::Write,
@@ -35,6 +35,7 @@ struct ModelVert {
 
 struct CachedModel {
     vao: GLuint,
+    vbos: [GLuint; 2],
     num_elements: GLint,
 }
 
@@ -44,6 +45,19 @@ struct ModelCache {
 
 impl ModelCache {
     fn new() -> ModelCache { ModelCache { models: HashMap::new() } }
+    fn purge(&mut self, gl: &Procs, model: &Model) {
+        match self.models.entry(model.unique_id) {
+            Entry::Occupied(x) => {
+                unsafe {
+                    let v = x.get();
+                    gl.DeleteVertexArrays(1, &v.vao);
+                    gl.DeleteBuffers(2, &v.vbos[0]);
+                }
+                x.remove_entry();
+            },
+            _ => (),
+        }
+    }
     fn get_or_make_cached(&mut self, gl: &Procs, program_model: GLuint,
                           model: &Model) -> &CachedModel {
         self.models.entry(model.unique_id)
@@ -56,12 +70,11 @@ impl ModelCache {
                             c: p.color_idx as u32,
                         }
                     }).collect();
-                let mut vao = 0;
-                let num_elements;
                 // Unsafe justification: okay, look, we're just gonna be using
                 // unsafe every time we talk to OpenGL. We aren't going to be
                 // able to avoid that. Okay? Okay.
                 unsafe {
+                    let mut vao = 0;
                     gl.GenVertexArrays(1, &mut vao);
                     let mut vbos = [0; 2];
                     gl.GenBuffers(2, &mut vbos[0]);
@@ -89,10 +102,10 @@ impl ModelCache {
                                   (indices.len() * 2) as GLsizeiptr,
                                   transmute(indices[..].as_ptr()),
                                   GL_STATIC_DRAW);
-                    num_elements = indices.len() as GLint;
-                }
-                CachedModel {
-                    vao, num_elements,
+                    let num_elements = indices.len() as GLint;
+                    CachedModel {
+                        vao, vbos, num_elements,
+                    }
                 }
             })
     }
@@ -1577,6 +1590,9 @@ impl Renderer for OpenGL32 {
         }
         #[cfg(debug_assertions)]
         assertgl(&self.gl, "rendering a text batch").unwrap();
+    }
+    fn purge_model(&mut self, model: &Model) {
+        self.model_cache.purge(&self.gl, model);
     }
     fn render_model(&mut self, model: &Model,
                     transform: &Transform, color_overrides: &[Color],
