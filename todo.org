@@ -16,4 +16,5 @@
 * TODO add alternate bloom modes to demo
 * TODO splitscreen support
 * TODO support 10-bit color
-* TODO all the code paths with bloom completely disabled D:
+* DONE all the code paths with bloom completely disabled D:
+* TODO change render params to be a reference passed to the begin rendering function
