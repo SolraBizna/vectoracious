@@ -971,7 +971,7 @@ impl Renderer for OpenGL32 {
     fn begin_rendering(&mut self, params: &RenderParams) -> anyhow::Result<()> {
         self.window.gl_make_current(&self.ctx)
             .map_err(|x| anyhow!("OpenGL context lost! {}", x))?;
-        let (win_w, win_h) = self.get_size();
+        let (win_w, win_h) = self.window.drawable_size();
         let world_render_x = params.world_scale.x.min(1.0).max(1.0 / 32.0);
         let world_render_y = params.world_scale.y.min(1.0).max(1.0 / 32.0);
         let w = if world_render_x == 1.0 { win_w }
@@ -1429,7 +1429,7 @@ impl Renderer for OpenGL32 {
         self.window.gl_swap_window();
     }
     fn get_size(&self) -> (u32, u32) {
-        self.window.drawable_size()
+        self.window.size()
     }
     fn resized(&mut self, _w: u32, _h: u32) -> anyhow::Result<()> {
         Ok(())
