@@ -1,6 +1,7 @@
 use crate::*;
 
 use std::{
+    error::Error,
     fmt::{Display, Debug, Formatter, Result as FmtResult},
     num::{ParseFloatError, ParseIntError},
     str::FromStr,
@@ -42,6 +43,8 @@ pub struct V2DParseError {
     #[allow(dead_code)] // this field is for Debug, on purpose
     inner: SomeKindaError,
 }
+
+impl Error for V2DParseError {}
 
 impl Display for V2DParseError {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> FmtResult {
