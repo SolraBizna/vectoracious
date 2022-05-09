@@ -145,7 +145,11 @@ impl RenderParams {
 pub struct Context {
     renderer: Box<dyn Renderer>,
     text_handler: TextHandler,
-    render_params: RenderParams,
+    /// The render parameters that will be used in the next render. Sensible
+    /// defaults are provided. Set individual fields to obtain desired results.
+    ///
+    /// Restore defaults with `render_params = Default::default()`
+    pub render_params: RenderParams,
 }
 
 pub struct Render<'a> {
@@ -187,6 +191,7 @@ impl Context {
             render_params: Default::default(),
         })
     }
+    #[deprecated]
     pub fn set_render_params(&mut self, params: &RenderParams) {
         self.render_params = *params
     }
