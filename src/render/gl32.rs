@@ -1006,6 +1006,12 @@ impl Renderer for OpenGL32 {
             self.world_h = world_h;
             self.world_samples = world_samples;
             unsafe {
+                // we do this in case there was already a multisampled texture
+                // and we create a non-multisampled one, or vice versa. we
+                // don't want stale textures hanging around. (there are other
+                // places here where that can happen but eh) -SB
+                gl.DeleteTextures(1, &self.world_tex);
+                gl.GenTextures(1, &mut self.world_tex);
                 if self.world_samples > 1 {
                     gl.BindTexture(GL_TEXTURE_2D_MULTISAMPLE, self.world_tex);
                     gl.TexImage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE,
