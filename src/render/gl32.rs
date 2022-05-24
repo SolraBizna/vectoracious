@@ -883,7 +883,7 @@ where F: FnMut() -> WindowBuilder
         // also what we want for the multisample test
         if loc_transform >= 0 {
             gl.UniformMatrix3fv(loc_transform, 1, 0,
-                                (&[1.0, 0.0, 0.0,
+                                (&[1.0f32, 0.0, 0.0,
                                    0.0, 1.0, 0.0,
                                    0.0, 0.0, 1.0]).as_ptr());
         }
@@ -893,7 +893,7 @@ where F: FnMut() -> WindowBuilder
         if loc_colors >= 0 {
             gl.Uniform4fv(loc_colors, 8,
                           [
-                              1.0, 0.0, 1.0, 1.0,
+                              1.0f32, 0.0, 1.0, 1.0,
                               1.0, 0.0, 0.0, 1.0,
                               0.0, 1.0, 0.0, 1.0,
                               1.0, 1.0, 0.0, 1.0,
