@@ -7,6 +7,7 @@ use std::{
 use half::f16;
 use rustybuzz::Face;
 use sdl2::video::WindowContext;
+use sdl2_sys::SDL_Window;
 
 mod color;
 pub use color::*;
@@ -193,7 +194,11 @@ impl Context {
             render_params: Default::default(),
         })
     }
-    pub fn get_window_context(&self) -> Rc<WindowContext> {
+    /// Returns a reference to the `WindowContext` of the underlying `Window`,
+    /// and a pointer to the underlying `SDL_Window` struct. You must make sure
+    /// that you only do safe things to this window, and that you only do them
+    /// while the `WindowContext` yet lives!
+    pub fn get_window_context(&self) -> (Rc<WindowContext>, *mut SDL_Window) {
         self.renderer.get_window_context()
     }
     #[deprecated]

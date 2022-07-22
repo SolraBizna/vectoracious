@@ -1638,8 +1638,8 @@ impl Renderer for OpenGL32 {
                             GL_UNSIGNED_SHORT, null());
         }
     }
-    fn get_window_context(&self) -> Rc<WindowContext> {
-        self.window.context()
+    fn get_window_context(&self) -> (Rc<WindowContext>, *mut SDL_Window) {
+        (self.window.context(), self.window.raw())
     }
 }
 
