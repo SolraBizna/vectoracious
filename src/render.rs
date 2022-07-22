@@ -1,7 +1,9 @@
 use crate::*;
 
+use std::rc::Rc;
+
 use sdl2::{
-    VideoSubsystem, video::WindowBuilder
+    VideoSubsystem, video::{WindowBuilder, WindowContext}
 };
 
 mod gl32;
@@ -54,6 +56,8 @@ pub(crate) trait Renderer {
     /// Purge any cached data relating to a given model. (If the model is
     /// rendered again, it will have to be recached.)
     fn purge_model(&mut self, model: &Model);
+    /// Returns a reference to the `WindowContext` of the underlying `Window`.
+    fn get_window_context(&self) -> Rc<WindowContext>;
 }
 
 pub(crate) fn create_renderer<F>(video: &VideoSubsystem, mut builder_maker: F)

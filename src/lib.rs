@@ -1,10 +1,12 @@
 use std::{
     ops::{Deref,DerefMut},
+    rc::Rc,
     sync::Arc,
 };
 
 use half::f16;
 use rustybuzz::Face;
+use sdl2::video::WindowContext;
 
 mod color;
 pub use color::*;
@@ -190,6 +192,9 @@ impl Context {
             text_handler,
             render_params: Default::default(),
         })
+    }
+    pub fn get_window_context(&self) -> Rc<WindowContext> {
+        self.renderer.get_window_context()
     }
     #[deprecated]
     pub fn set_render_params(&mut self, params: &RenderParams) {
