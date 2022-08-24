@@ -190,7 +190,7 @@ impl Model {
             lineno = lineno.saturating_add(1);
             let mut parsed = vec![];
             let line = line.split('#').next().unwrap_or("");
-            for word in line.split(|x| x == ' ' || x == ',') {
+            for word in line.split(|x| x == ' ' || x == ',' || x == '|') {
                 if word.len() > 0 { parsed.push(word); }
             }
             if parsed.len() == 0 { continue }
