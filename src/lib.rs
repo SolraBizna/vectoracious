@@ -201,7 +201,7 @@ impl Context {
     pub fn get_window_context(&self) -> (Rc<WindowContext>, *mut SDL_Window) {
         self.renderer.get_window_context()
     }
-    #[deprecated]
+    #[deprecated="Manipulate context.render_params directly instead"]
     pub fn set_render_params(&mut self, params: &RenderParams) {
         self.render_params = *params
     }
