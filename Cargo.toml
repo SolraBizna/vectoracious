@@ -13,6 +13,6 @@ libc = "0.2.116"
 sdl2 = "0.35.1"
 sdl2-sys = "*"
 anyhow = "1.0"
-psilo-text = {git="https://github.com/SolraBizna/psilo-text", rev="ccc07bc"}
-rustybuzz = "0.4.0"
+psilo-text = {git="https://github.com/SolraBizna/psilo-text", rev="3dfbb5e"}
+rustybuzz = "0.8.0"
 backtrace = "0.3.64"
