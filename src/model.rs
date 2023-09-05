@@ -187,6 +187,7 @@ impl Model {
         let mut colors = Vec::new();
         let mut lineno: u32 = 0;
         for line in input.split('\n') {
+            let line = line.trim();
             lineno = lineno.saturating_add(1);
             let mut parsed = vec![];
             let line = line.split('#').next().unwrap_or("");
