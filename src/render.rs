@@ -54,11 +54,8 @@ pub(crate) trait Renderer {
     /// Purge any cached data relating to a given model. (If the model is
     /// rendered again, it will have to be recached.)
     fn purge_model(&mut self, model: &Model);
-    /// Returns a reference to the `WindowContext` of the underlying `Window`,
-    /// and a pointer to the underlying `SDL_Window` struct. You must make sure
-    /// that you only do safe things to this window, and that you only do them
-    /// while the `WindowContext` yet lives!
-    fn get_window_context(&self) -> (Rc<WindowContext>, *mut SDL_Window);
+    /// Returns a reference to the underlying `Window`.
+    fn get_window(&self) -> &Window;
 }
 
 pub(crate) fn create_renderer<F>(video: &VideoSubsystem, mut builder_maker: F)

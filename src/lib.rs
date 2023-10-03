@@ -1,13 +1,11 @@
 use std::{
     ops::{Deref,DerefMut},
-    rc::Rc,
     sync::Arc,
 };
 
 use half::f16;
 use rustybuzz::Face;
-use sdl2::video::WindowContext;
-use sdl2_sys::SDL_Window;
+use sdl2::video::Window;
 
 mod color;
 pub use color::*;
@@ -198,8 +196,8 @@ impl Context {
     /// and a pointer to the underlying `SDL_Window` struct. You must make sure
     /// that you only do safe things to this window, and that you only do them
     /// while the `WindowContext` yet lives!
-    pub fn get_window_context(&self) -> (Rc<WindowContext>, *mut SDL_Window) {
-        self.renderer.get_window_context()
+    pub fn get_window(&self) -> &Window {
+        self.renderer.get_window()
     }
     #[deprecated="Manipulate context.render_params directly instead"]
     pub fn set_render_params(&mut self, params: &RenderParams) {
