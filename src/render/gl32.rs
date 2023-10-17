@@ -557,12 +557,12 @@ where F: FnMut() -> WindowBuilder
         Ok(x) => x,
         Err(x) => {
             return
-                Err(anyhow!("Unable to create window for OpenGL 3.0 \
+                Err(anyhow!("Unable to create window for OpenGL 3.2 \
                              context: {}", x))?;
         },
     };
     let ctx = window.gl_create_context()
-        .map_err(|x|anyhow!("Unable to create OpenGL 3.0 context: {}",x))?;
+        .map_err(|x|anyhow!("Unable to create OpenGL 3.2 context: {}",x))?;
     window.gl_make_current(&ctx)
         .map_err(|x| anyhow!("OpenGL context lost! {}", x))?;
     let gl = Procs::new(|proc| {
