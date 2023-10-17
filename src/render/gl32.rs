@@ -111,7 +111,7 @@ impl ModelCache {
     }
 }
 
-/// Renders using OpenGL 3.0 Core.
+/// Renders using OpenGL 3.2 Core.
 struct OpenGL32 {
     window: Window,
     ctx: GLContext,
