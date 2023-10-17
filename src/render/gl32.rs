@@ -544,7 +544,7 @@ where F: FnMut() -> WindowBuilder
 {
     let gl_attr = video.gl_attr();
     gl_attr.set_context_profile(GLProfile::Core);
-    gl_attr.set_context_version(3, 0);
+    gl_attr.set_context_version(3, 2);
     #[cfg(debug_assertions)]
     gl_attr.set_context_flags().debug();
     gl_attr.set_multisample_buffers(0);
