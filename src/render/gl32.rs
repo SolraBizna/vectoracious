@@ -174,9 +174,6 @@ struct OpenGL32 {
     /// the size
     updog_vao: GLuint,
     model_cache: ModelCache,
-    loc_transform: GLint,
-    loc_opacity: GLint,
-    loc_colors: GLint,
     max_multisample_power: u32,
     is_blending: bool,
     /// Width of world framebuffer
@@ -873,36 +870,28 @@ where F: FnMut() -> WindowBuilder
             (b"atlas\0", &|gl, loc| gl.Uniform1i(loc, 0)),
         ]);
         gl.UseProgram(program_model);
-        let loc_transform = gl.GetUniformLocation(program_model,
-                                              transmute(b"transform\0"));
-        let loc_colors = gl.GetUniformLocation(program_model,
-                                           transmute(b"colors\0"));
-        let loc_opacity = gl.GetUniformLocation(program_model,
-                                            transmute(b"opacity\0"));
         // Set up initial values for the uniforms... which, COINCIDENTALLY, are
         // also what we want for the multisample test
-        if loc_transform >= 0 {
-            gl.UniformMatrix3fv(loc_transform, 1, 0,
-                                (&[1.0f32, 0.0, 0.0,
-                                   0.0, 1.0, 0.0,
-                                   0.0, 0.0, 1.0]).as_ptr());
-        }
-        if loc_opacity >= 0 {
-            gl.Uniform1f(loc_opacity, 1.0);
-        }
-        if loc_colors >= 0 {
-            gl.Uniform4fv(loc_colors, 8,
-                          [
-                              1.0f32, 0.0, 1.0, 1.0,
-                              1.0, 0.0, 0.0, 1.0,
-                              0.0, 1.0, 0.0, 1.0,
-                              1.0, 1.0, 0.0, 1.0,
-                              0.0, 0.0, 1.0, 1.0,
-                              1.0, 0.0, 1.0, 1.0,
-                              0.0, 1.0, 1.0, 1.0,
-                              1.0, 1.0, 1.0, 1.0,
-                          ].as_ptr());
-        }
+        setup_uniforms(&gl, program_model, "model", &[
+            (b"transform\0", &|gl,loc| gl.UniformMatrix3fv(loc, 1, 0,
+                (&[1.0f32, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                    0.0, 0.0, 1.0]).as_ptr())),
+            (b"opacity\0", &|gl,loc| gl.Uniform1f(loc, 1.0)),
+            (b"colors\0", &|gl,loc| {
+                gl.Uniform4fv(loc, 8,
+                    [
+                        1.0f32, 0.0, 1.0, 1.0,
+                        1.0, 0.0, 0.0, 1.0,
+                        0.0, 1.0, 0.0, 1.0,
+                        1.0, 1.0, 0.0, 1.0,
+                        0.0, 0.0, 1.0, 1.0,
+                        1.0, 0.0, 1.0, 1.0,
+                        0.0, 1.0, 1.0, 1.0,
+                        1.0, 1.0, 1.0, 1.0,
+                    ].as_ptr())
+            })
+        ]);
         let mut max_sample_count = 0;
         gl.GetIntegerv(GL_MAX_SAMPLES, &mut max_sample_count);
         if let Ok(value) = env::var("GL_MAX_SAMPLES") {
@@ -944,7 +933,7 @@ where F: FnMut() -> WindowBuilder
             window, ctx, gl, last_batch_type: LastBatchType::None,
             program_model, program_text, program_bwm, bound_texture:
             None, force_multisample, quad_vao, quad_vb, model_cache:
-            ModelCache::new(), loc_transform, loc_colors, loc_opacity,
+            ModelCache::new(),
             max_multisample_power, world_w: 0, world_h: 0,
             world_samples: 0, bloom_w: 0, bloom_h: 0, bloom_under_x:
             0, bloom_under_y: 0, world_super_x: 0, world_super_y: 0,
@@ -1618,22 +1607,20 @@ impl Renderer for OpenGL32 {
                 assertgl(gl, "switching to the model shader").unwrap();
             }
             gl.BindVertexArray(cached.vao);
-            if self.loc_transform >= 0 {
-                gl.UniformMatrix3fv(self.loc_transform, 1, 0,
-                                    transform.into_inner().as_slice()
-                                    .as_ptr());
-            }
-            if self.loc_opacity >= 0 {
-                gl.Uniform1f(self.loc_opacity, opacity);
-            }
-            if self.loc_colors >= 0 {
-                for n in 0 .. model.colors.len() {
-                    let color = color_overrides.get(n)
-                        .unwrap_or(&model.colors[n]);
-                    gl.Uniform4f(self.loc_colors + (n as GLint),
-                                 color.r, color.g, color.b, color.a);
-                }
-            }
+            setup_uniforms(gl, self.program_model, "model", &[
+                (b"transform\0", &|gl,loc| gl.UniformMatrix3fv(loc, 1, 0,
+                    transform.into_inner().as_slice()
+                    .as_ptr())),
+                (b"opacity\0", &|gl,loc| gl.Uniform1f(loc, opacity)),
+                (b"colors\0", &|gl,loc| {
+                    for n in 0 .. model.colors.len() {
+                        let color = color_overrides.get(n)
+                            .unwrap_or(&model.colors[n]);
+                        gl.Uniform4f(loc + (n as GLint),
+                                     color.r, color.g, color.b, color.a);
+                    }
+                })
+            ]);
             gl.DrawElements(GL_TRIANGLES, cached.num_elements,
                             GL_UNSIGNED_SHORT, null());
         }
